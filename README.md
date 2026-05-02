@@ -28,18 +28,28 @@ A comprehensive EdTech platform for learning sign language using computer vision
 
 ```
 kineira/
-├── frontend/          # Next.js frontend
-│   ├── src/
-│   │   ├── components/
-│   │   ├── lib/       # HandTracker, ScoringEngine, SignProcessor
-│   │   ├── pages/
-│   │   └── types/
-│   ├── package.json
-│   └── tailwind.config.js
-└── backend/           # FastAPI backend
-    ├── main.py        # API endpoints
-    ├── models.py      # Database models
-    ├── database.py    # Database operations
+├── frontend/
+│   └── src/
+│       ├── components/
+│       │   ├── camera/
+│       │   └── layout/
+│       ├── lib/
+│       │   └── landmarks/
+│       ├── pages/
+│       ├── services/
+│       │   └── api/
+│       └── types/
+└── backend/
+    ├── api/
+    │   ├── routers/
+    │   ├── schemas/
+    │   └── services/
+    ├── data_prep/
+    │   └── wlasl/
+    ├── db/
+    ├── ml/
+    │   └── training/
+    ├── main.py
     └── requirements.txt
 ```
 
@@ -71,28 +81,36 @@ The frontend will be available at `http://localhost:3000`
 cd backend
 ```
 
-2. Create virtual environment:
+2. Create a single project-local virtual environment:
 ```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+python -m venv .venv
 ```
 
-3. Install dependencies:
+3. Activate virtual environment:
+   - On Windows PowerShell: `.\.venv\Scripts\Activate.ps1`
+   - On Unix/Linux: `source .venv/bin/activate`
+
+4. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-4. Run the database setup:
+5. Run the database setup:
 ```bash
-python models.py
+python db/models.py
 ```
 
-5. Start the API server:
+6. Seed the database with sample lessons and signs:
+```bash
+python db/seed.py
+```
+
+7. Start the API server:
 ```bash
 python main.py
 ```
 
-The API will be available at `http://localhost:8001`
+The API will be available at `http://localhost:8000`
 
 ## Usage
 
@@ -104,15 +122,13 @@ The API will be available at `http://localhost:8001`
 
 ## API Endpoints
 
-- `GET /` - API status
 - `POST /recognize-sign` - Recognize sign from landmark sequence
-- `POST /score-gesture` - Score gesture accuracy
-- `POST /users` - Create new user
-- `GET /users/{user_id}` - Get user info
-- `GET /signs` - Get all signs
-- `GET /lessons` - Get all lessons
-- `POST /attempts` - Record learning attempt
+- `POST /score-sign` - Score user sequence against reference sign
+- `GET /lessons` - List lessons
+- `GET /lessons/{lesson_id}` - Lesson detail
 - `GET /users/{user_id}/progress` - Get user progress
+- `POST /users/{user_id}/progress` - Save attempt + update progress
+- `GET /users/{user_id}/attempts` - Recent attempts
 
 ## Development Roadmap
 
@@ -123,10 +139,22 @@ The API will be available at `http://localhost:8001`
 - Database schema for users and progress
 
 ### Phase 2
-- Train ML model for sign recognition
+- Train ML model for sign recognition using WLASL landmark sequences
 - Implement temporal gesture analysis
 - Add more sign language signs
 - Improve scoring accuracy
+
+### Dataset and training
+1. Download WLASL videos: `python data_prep/wlasl/video_downloader.py`
+2. Preprocess WLASL videos: `python data_prep/wlasl/preprocess.py`
+3. Extract canonical landmarks: `python data_prep/wlasl_to_landmarks.py`
+4. Train alphabet model (hand-dominant): `python ml/training/train_alphabet.py`
+5. Train word model: `python ml/training/train_word.py`
+6. Train CTC sentence model: `python ml/training/train_ctc.py`
+
+Note:
+- Use only one backend environment (`backend/.venv`) to avoid version drift.
+- If multiple `venv` folders exist, they are separate and not synchronized automatically.
 
 ### Phase 3
 - Lesson system and curriculum

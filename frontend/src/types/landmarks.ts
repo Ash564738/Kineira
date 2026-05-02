@@ -4,4 +4,9 @@ export interface LandmarkPoint {
   z: number;
 }
 
-export type HandLandmarks = LandmarkPoint[];
+export interface FrameLandmarks {
+  left_hand: LandmarkPoint[];
+  right_hand: LandmarkPoint[];
+  pose: LandmarkPoint[];
+  face: LandmarkPoint[];
+}

@@ -3,3 +3,11 @@ frontend/node_modules/
 .next/
 dist/
 .env
+__pycache__/
+*.pyc
+backend/.venv/
+backend/venv/
+backend/artifacts/
+backend/*.pth
+backend/training_data.json
+backend/model_metrics.json
