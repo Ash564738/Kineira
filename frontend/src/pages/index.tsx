@@ -1,315 +1,189 @@
-// filepath: frontend/src/pages/index.tsx
 import React, { useState, useRef, useEffect } from "react";
-import Link from "next/link";
 import CameraView from "../components/camera/CameraView";
-import { FrameLandmarks } from "../types/landmarks";
 import TopNav from "../components/layout/TopNav";
-import { PredictionResult, ScoringResult } from "../types/api";
-import { recognizeSign } from "../services/api/client";
+import { FRAMES_PER_VIDEO, FEATURE_SIZE, FrameSample } from "../types/landmarks";
 
-console.log("[INDEX] Module initialized");
+const COOLDOWN_MS = 2000;  // thời gian nghỉ sau mỗi lần dự đoán (ms)
 
-const WINDOW_SIZE = 60;
-const SEND_INTERVAL = 15;
-const MIN_FRAMES_TO_SEND = 3;
+// Debug logging helper
+const log = {
+  info: (msg: string, data?: any) => console.log(`[TRANSLATE_PAGE] INFO: ${msg}`, data || ''),
+  debug: (msg: string, data?: any) => console.debug(`[TRANSLATE_PAGE] DEBUG: ${msg}`, data || ''),
+  warn: (msg: string, data?: any) => console.warn(`[TRANSLATE_PAGE] WARN: ${msg}`, data || ''),
+  error: (msg: string, data?: any) => console.error(`[TRANSLATE_PAGE] ERROR: ${msg}`, data || ''),
+};
 
-const Home: React.FC = () => {
-  console.log("[INDEX] Home render started");
+const Translate: React.FC = () => {
+  const [isTranslating, setIsTranslating] = useState(false);
+  const [prediction, setPrediction] = useState("");
+  const [confidence, setConfidence] = useState(0.0);
+  const [error, setError] = useState("");
 
-  const [prediction, setPrediction] = useState<PredictionResult | null>(null);
-  const [scoringResult, setScoringResult] = useState<ScoringResult | null>(null);
-  const [isRecording, setIsRecording] = useState(false);
+  const isTranslatingRef = useRef(false);
+  const keypointsBufferRef = useRef<number[][]>([]);
+  const cooldownRef = useRef(false);          // đang trong thời gian nghỉ
+  const cooldownTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-
-  const isRecordingRef = useRef(false);
-
-  const [mode, setMode] = useState<"alphabet" | "word" | "sentence">("alphabet");
-  const [currentSign, setCurrentSign] = useState("a");
-  const [showScore, setShowScore] = useState(false);
-  const [frameCount, setFrameCount] = useState(0);
-
-  const framesRef = useRef<FrameLandmarks[]>([]);
-  const frameCounterRef = useRef(0);
-  const sendingRef = useRef(false);
-  const modeRef = useRef(mode);
-  const signRef = useRef(currentSign);
-
-
-  console.log("[INDEX] Current state snapshot =", {
-    isRecording,
-    mode,
-    currentSign,
-    frameCount,
-    bufferedFrames: framesRef.current.length,
-    sending: sendingRef.current,
-    hasPrediction: !!prediction,
-  });
-
+  // Đồng bộ isTranslating vào ref
   useEffect(() => {
-    try {
-      console.log("[INDEX] mode useEffect triggered, old =", modeRef.current, "new =", mode);
-      modeRef.current = mode;
-      console.log("[INDEX] modeRef updated =", modeRef.current);
-    } catch (error) {
-      console.error("[INDEX] mode useEffect failed =", error);
+    isTranslatingRef.current = isTranslating;
+    log.info(`Translation mode ${isTranslating ? 'ENABLED' : 'DISABLED'}`);
+    // Khi bắt đầu dịch, reset buffer và cooldown
+    if (isTranslating) {
+      keypointsBufferRef.current = [];
+      cooldownRef.current = false;
+      if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
+    } else {
+      // Dừng dịch: hủy cooldown nếu có
+      if (cooldownTimerRef.current) {
+        clearTimeout(cooldownTimerRef.current);
+        cooldownTimerRef.current = null;
+      }
     }
-  }, [mode]);
+  }, [isTranslating]);
 
-  useEffect(() => {
+  // Hàm gọi API translate
+  const translateSequence = async (sequence: number[][]) => {
+    log.info("=".repeat(60));
+    log.info("TRANSLATE API CALL STARTED");
+    log.info("=".repeat(60));
+    log.info(`Sending translation request - sequence length: ${sequence.length} frames`);
+    log.debug(`Sequence shape: ${sequence.length} x ${sequence[0]?.length || 0}`);
+
     try {
-      console.log("[INDEX] currentSign useEffect triggered, old =", signRef.current, "new =", currentSign);
-      signRef.current = currentSign;
-      console.log("[INDEX] signRef updated =", signRef.current);
-    } catch (error) {
-      console.error("[INDEX] currentSign useEffect failed =", error);
-    }
-  }, [currentSign]);
-
-  const hasUsefulLandmarks = (frame: FrameLandmarks) => {
-    try {
-      const useful =
-        frame.left_hand.length > 0 ||
-        frame.right_hand.length > 0 ||
-        frame.pose.length > 0 ||
-        frame.face.length > 0;
-
-      console.log("[INDEX] hasUsefulLandmarks =", {
-        useful,
-        left: frame.left_hand.length,
-        right: frame.right_hand.length,
-        pose: frame.pose.length,
-        face: frame.face.length,
+      const res = await fetch("http://localhost:8000/translate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ keypoints_sequence: sequence })
       });
 
-      return useful;
-    } catch (error) {
-      console.error("[INDEX] hasUsefulLandmarks failed =", error);
-      return false;
+      log.debug(`API response status: ${res.status}`);
+      if (!res.ok) throw new Error(`API error ${res.status}`);
+
+      const data = await res.json();
+      log.info(`Translation result: sign='${data.sign}', confidence=${data.confidence.toFixed(4)}`);
+      log.info("=".repeat(60));
+      log.info("TRANSLATE API CALL COMPLETED");
+      log.info("=".repeat(60));
+
+      setPrediction(data.sign);
+      setConfidence(data.confidence);
+      setError("");
+    } catch (err: any) {
+      log.error(`Translation failed: ${err.message}`, err);
+      log.info("=".repeat(60));
+      log.info("TRANSLATE API CALL FAILED");
+      log.info("=".repeat(60));
+      setError(`Translation failed: ${err.message}`);
     }
   };
 
-  const handleLandmarksDetected = (frame: FrameLandmarks) => {
-    try {
-      console.log("[INDEX] handleLandmarksDetected called");
+  // Nhận mỗi frame từ CameraView
+  const handleFrameDetected = (sample: FrameSample) => {
+    if (!isTranslatingRef.current) return;
+    // Đang trong cooldown thì bỏ qua frame
+    if (cooldownRef.current) return;
 
-      if (!isRecordingRef.current) {
-        console.warn("[INDEX] Frame ignored because recording is false");
-        return;
+    // Chỉ nhận frame đủ chiều dài keypoints
+    if (sample.keypoints.length === FEATURE_SIZE) {
+      keypointsBufferRef.current.push([...sample.keypoints]);
+
+      log.debug(`Frame added to buffer - current length: ${keypointsBufferRef.current.length}/${FRAMES_PER_VIDEO}`);
+
+      // Khi buffer đủ 30 frame, gửi translate và kích hoạt cooldown
+      if (keypointsBufferRef.current.length === FRAMES_PER_VIDEO) {
+        const sequence = [...keypointsBufferRef.current]; // copy
+        translateSequence(sequence);
+
+        // Reset buffer
+        keypointsBufferRef.current = [];
+
+        // Bật cooldown, sau COOLDOWN_MS mới nhận frame tiếp
+        cooldownRef.current = true;
+        if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
+        cooldownTimerRef.current = setTimeout(() => {
+          cooldownRef.current = false;
+          cooldownTimerRef.current = null;
+          log.debug("Cooldown ended, ready for next sign");
+        }, COOLDOWN_MS);
       }
-
-      if (!hasUsefulLandmarks(frame)) {
-        console.warn("[INDEX] Frame ignored because no useful landmarks");
-        return;
-      }
-
-      frameCounterRef.current += 1;
-      setFrameCount(frameCounterRef.current);
-
-      console.log("[INDEX] Frame accepted =", {
-        frameCounter: frameCounterRef.current,
-        previousBufferSize: framesRef.current.length,
-      });
-
-      framesRef.current.push(frame);
-
-      if (framesRef.current.length > WINDOW_SIZE) {
-        console.warn("[INDEX] Buffer exceeded WINDOW_SIZE, removing oldest frame");
-        framesRef.current.shift();
-      }
-
-      const shouldSend =
-        framesRef.current.length >= MIN_FRAMES_TO_SEND &&
-        frameCounterRef.current % SEND_INTERVAL === 0 &&
-        !sendingRef.current;
-
-      if (shouldSend) {
-        console.log("[INDEX] Triggering sendToAPI");
-        sendToAPI([...framesRef.current]);
-      }
-    } catch (error) {
-      console.error("[INDEX] handleLandmarksDetected failed =", error);
+    } else {
+      log.debug(`Invalid frame - keypoints length: ${sample.keypoints.length}, expected: ${FEATURE_SIZE}`);
     }
   };
 
-  const sendToAPI = async (sequence: FrameLandmarks[]) => {
-    try {
-      console.log("[INDEX] sendToAPI entered with sequence length =", sequence.length);
+  const startTranslation = () => {
+    // state thay đổi sẽ trigger useEffect xóa buffer & cooldown
+    setPrediction("");
+    setConfidence(0.0);
+    setError("");
+    setIsTranslating(true);
+  };
 
-      if (sendingRef.current) {
-        console.warn("[INDEX] Request skipped because sendingRef.current is true");
-        return;
-      }
-
-      if (sequence.length < MIN_FRAMES_TO_SEND) {
-        console.warn("[INDEX] Request skipped because sequence too short =", sequence.length);
-        return;
-      }
-
-      sendingRef.current = true;
-
-      const data = await recognizeSign(sequence, modeRef.current);
-
-      console.log("[INDEX] Normalized prediction =", data);
-
-      setPrediction((prev) => {
-        if (
-          prev?.sign === data.sign &&
-          prev?.confidence === data.confidence
-        ) {
-          return prev;
-        }
-        return data;
-      });
-
-      console.log("[INDEX] Prediction state updated");
-    } catch (error) {
-      console.error("[INDEX] sendToAPI failed =", error);
-    } finally {
-      sendingRef.current = false;
-      console.log("[INDEX] sendingRef reset to false");
+  const stopTranslation = () => {
+    setIsTranslating(false);
+    keypointsBufferRef.current = [];
+    cooldownRef.current = false;
+    if (cooldownTimerRef.current) {
+      clearTimeout(cooldownTimerRef.current);
+      cooldownTimerRef.current = null;
     }
   };
-
-  const startRecording = () => {
-    console.log("[INDEX] startRecording clicked");
-    framesRef.current = [];
-    frameCounterRef.current = 0;
-    sendingRef.current = false;
-
-    setFrameCount(0);
-    setPrediction(null);
-    setScoringResult(null);
-    setShowScore(false);
-
-    console.log("[INDEX] setIsRecording(true) about to execute");
-    isRecordingRef.current = true;
-    setIsRecording(true);
-    console.log("[INDEX] Recording state initialized");
-  };
-
-  const stopRecording = () => {
-    console.log("[INDEX] stopRecording clicked");
-    isRecordingRef.current = false;
-    setIsRecording(false);
-    console.log("[INDEX] Recording stopped");
-  };
-
-  useEffect(() => {
-    isRecordingRef.current = isRecording;
-    console.log("[INDEX] isRecording state changed =", isRecording);
-  }, [isRecording]);
-
-
-
-  const changeSign = (sign: string) => {
-    try {
-      console.log("[INDEX] changeSign called from", currentSign, "to", sign);
-
-      setCurrentSign(sign);
-      setPrediction(null);
-      setScoringResult(null);
-      setShowScore(false);
-
-      framesRef.current = [];
-      frameCounterRef.current = 0;
-      setFrameCount(0);
-
-      console.log("[INDEX] Sign changed and buffers reset");
-    } catch (error) {
-      console.error("[INDEX] changeSign failed =", error);
-    }
-  };
-
-  const alphabetSigns = "abcdefghijklmnopqrstuvwxyz".split("");
 
   return (
     <div className="min-h-screen bg-slate-950 text-white">
-      <TopNav active="practice" />
+      <TopNav active="translate" />
+      <main className="max-w-4xl mx-auto px-6 py-8">
+        <h1 className="text-2xl font-semibold mb-6">Translate Sign Language</h1>
 
-      <main className="max-w-7xl mx-auto px-6 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 space-y-4">
-            <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-5">
-              <div className="flex justify-between items-center mb-4">
-                <div className="flex bg-slate-800 rounded-lg p-1">
-                  {["alphabet", "word", "sentence"].map((m) => (
-                    <button
-                      key={m}
-                      onClick={() => {
-                        console.log("[INDEX] Mode button clicked =", m);
-                        setMode(m as "alphabet" | "word" | "sentence");
-                      }}
-                      className={`px-3 py-1.5 text-sm rounded-md capitalize ${
-                        mode === m ? "bg-white text-black" : "text-white/60"
-                      }`}
-                    >
-                      {m}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="text-xs text-white/50">
-                  {frameCount}/{WINDOW_SIZE}
-                </div>
-              </div>
-
-              <CameraView
-                onLandmarksDetected={handleLandmarksDetected}
-                isRecording={isRecording}
-              />
-
-              <div className="flex justify-center mt-5 gap-3">
-                {!isRecording ? (
-                  <button
-                    onClick={startRecording}
-                    className="px-5 py-2 rounded-lg bg-green-500 text-black"
-                  >
-                    Start
-                  </button>
-                ) : (
-                  <button
-                    onClick={stopRecording}
-                    className="px-5 py-2 rounded-lg bg-red-500 text-white"
-                  >
-                    Stop
-                  </button>
-                )}
-              </div>
+        <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-5">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-lg font-medium">Camera</h2>
+            <div className="text-sm text-white/60">
+              {isTranslating ? "Translating..." : "Ready"}
             </div>
           </div>
-              <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-5">
-                <div className="text-sm text-white/50 mb-2">Prediction</div>
-                {prediction && (
-                  <div>
-                    <div className="text-2xl font-semibold">{prediction.sign}</div>
-                    <div className="text-sm text-white/60 mt-2">
-                      Confidence: {(prediction.confidence * 100).toFixed(1)}%
-                    </div>
-                  </div>
-                )}
-              </div>
-          <div className="space-y-4">
-            <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-5">
-              <div className="text-center text-5xl font-bold mb-4">
-                {currentSign.toUpperCase()}
-              </div>
 
-              <div className="grid grid-cols-6 gap-1">
-                {alphabetSigns.map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => changeSign(s)}
-                    className={`p-2 rounded text-sm ${
-                      currentSign === s
-                        ? "bg-white text-black"
-                        : "bg-slate-800 text-white/60"
-                    }`}
-                  >
-                    {s.toUpperCase()}
-                  </button>
-                ))}
+          {/* Camera View */}
+          <CameraView
+            isRecording={isTranslating}
+            mode="recognition"
+            onFrameDetected={handleFrameDetected}
+          />
+
+          <div className="flex justify-center mt-4 gap-3">
+            {!isTranslating ? (
+              <button
+                onClick={startTranslation}
+                className="px-6 py-2 rounded-lg bg-green-500 text-black font-semibold"
+              >
+                Start Translate
+              </button>
+            ) : (
+              <button
+                onClick={stopTranslation}
+                className="px-6 py-2 rounded-lg bg-red-500 text-white font-semibold"
+              >
+                Stop
+              </button>
+            )}
+          </div>
+
+          {/* Hiển thị kết quả ngay dưới camera */}
+          <div className="mt-6 p-4 rounded-xl bg-slate-800/50 border border-white/10">
+            <div className="text-sm text-white/50 mb-1">Prediction</div>
+            {error ? (
+              <p className="text-red-400 text-sm">{error}</p>
+            ) : prediction ? (
+              <div>
+                <span className="text-3xl font-bold text-white">{prediction}</span>
+                <span className="ml-3 text-sm text-green-400">
+                  {(confidence * 100).toFixed(1)}% confidence
+                </span>
               </div>
-            </div>
+            ) : (
+              <p className="text-white/40 italic">Waiting for sign...</p>
+            )}
           </div>
         </div>
       </main>
@@ -317,4 +191,4 @@ const Home: React.FC = () => {
   );
 };
 
-export default Home;
+export default Translate;

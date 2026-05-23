@@ -6,12 +6,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.routers.lessons import router as lessons_router
 from api.routers.progress import router as progress_router
 from api.routers.recognition import router as recognition_router
+from api.routers.data_collection import router as data_collection_router
+from api.routers.training import router as training_router
 from api.services.inference import inference_service
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Sign API")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,6 +29,8 @@ app.add_middleware(
 app.include_router(recognition_router)
 app.include_router(lessons_router)
 app.include_router(progress_router)
+app.include_router(data_collection_router)
+app.include_router(training_router)
 
 
 @app.on_event("startup")

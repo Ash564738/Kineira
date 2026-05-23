@@ -1,23 +1,22 @@
-import { FrameLandmarks } from "./landmarks";
-
 export interface PredictionResult {
   sign: string;
   confidence: number;
-  gloss: string;
-  sentence: string;
 }
 
 export interface ScoringResult {
   score: number;
   feedback: string;
+  accuracy: number;
+  completeness: number;
+  timing: number;
   details: {
-    accuracy: number;
-    completeness: number;
-    timing: number;
+    completeness: any;
+    timing: any;
+    accuracy: any;
+    cosine_similarity: number;
+    dtw_similarity: number;
+    transformer_similarity: number;
   };
-  is_correct: boolean;
-  reference_sign: string;
-  user_sign: string;
 }
 
 export interface Lesson {
@@ -51,10 +50,4 @@ export interface AttemptPayload {
   sign_id: number;
   score: number;
   feedback: string;
-  landmarks_data?: string;
-}
-
-export interface RecognizePayload {
-  landmarks_sequence: FrameLandmarks[];
-  mode: "alphabet" | "word" | "sentence";
 }

@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 interface TopNavProps {
-  active: "practice" | "lessons" | "progress";
+  active?: "translate" | "lessons" | "progress" | "collect";
 }
 
 export default function TopNav({ active }: TopNavProps) {
@@ -10,14 +10,45 @@ export default function TopNav({ active }: TopNavProps) {
       <div className="max-w-7xl mx-auto px-6 py-5 flex justify-between items-center">
         <div className="text-2xl font-semibold tracking-wide">Kineira</div>
         <nav className="flex gap-6 text-sm text-white/70">
-          <Link href="/" className={active === "practice" ? "text-white" : "hover:text-white transition-colors"}>
-            Practice
+          <Link
+            href="/"
+            className={
+              active === "translate"
+                ? "text-white"
+                : "hover:text-white transition-colors"
+            }
+          >
+            Translate
           </Link>
-          <Link href="/lessons" className={active === "lessons" ? "text-white" : "hover:text-white transition-colors"}>
+          <Link
+            href="/lessons"
+            className={
+              active === "lessons"
+                ? "text-white"
+                : "hover:text-white transition-colors"
+            }
+          >
             Lessons
           </Link>
-          <Link href="/progress" className={active === "progress" ? "text-white" : "hover:text-white transition-colors"}>
+          <Link
+            href="/progress"
+            className={
+              active === "progress"
+                ? "text-white"
+                : "hover:text-white transition-colors"
+            }
+          >
             Progress
+          </Link>
+          <Link
+            href="/collect"
+            className={
+              active === "collect"
+                ? "text-white"
+                : "hover:text-white transition-colors"
+            }
+          >
+            Collect Data
           </Link>
         </nav>
       </div>

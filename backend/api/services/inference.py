@@ -1,211 +1,112 @@
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-
+from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
-import torch
-import torch.nn as nn
 
-from api.services.scoring import compute_overall_score, generate_feedback
-from ml.preprocess import INPUT_SIZE, preprocess_sequence
+try:
+    from tensorflow.keras.models import load_model as keras_load_model
+    KERAS_AVAILABLE = True
+except ImportError:
+    KERAS_AVAILABLE = False
+    keras_load_model = None
+
+from config import MODEL_PATH, ACTIONS
 
 logger = logging.getLogger(__name__)
-device = "cuda" if torch.cuda.is_available() else "cpu"
 
-BASE_DIR = Path(__file__).resolve().parents[2]
-ARTIFACTS_DIR = BASE_DIR / "artifacts"
-MODELS_DIR = ARTIFACTS_DIR / "models"
-
-ALPHABET_MODEL_PATH = MODELS_DIR / "alphabet_model.pth"
-WORD_MODEL_PATH = MODELS_DIR / "word_model.pth"
-CTC_MODEL_PATH = MODELS_DIR / "ctc_model.pth"
-TRAINING_DATA_PATH = ARTIFACTS_DIR / "training_data.json"
-
-LEGACY_ALPHABET_MODEL_PATH = BASE_DIR / "alphabet_model.pth"
-LEGACY_WORD_MODEL_PATH = BASE_DIR / "word_model.pth"
-LEGACY_CTC_MODEL_PATH = BASE_DIR / "ctc_model.pth"
-LEGACY_TRAINING_DATA_PATH = BASE_DIR / "training_data.json"
+KERAS_MODEL_PATH = Path(MODEL_PATH)
+ACTIONS_META_PATH = KERAS_MODEL_PATH.parent / "actions.json"
 
 
-class AlphabetModel(nn.Module):
-    def __init__(self, num_classes: int):
-        super().__init__()
-        self.lstm = nn.LSTM(INPUT_SIZE, 64, num_layers=1, batch_first=True, bidirectional=True)
-        self.dropout = nn.Dropout(0.5)
-        self.fc = nn.Sequential(nn.Linear(128, 64), nn.ReLU(), nn.Dropout(0.4), nn.Linear(64, num_classes))
+class PredictionSmoother:
+    def __init__(self, window_size: int = 5, threshold: float = 0.5):
+        self.window_size = window_size
+        self.threshold = threshold
+        self.history: List[Tuple[int, float]] = []
+        self.current_sentence: List[str] = []
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        out, _ = self.lstm(x)
-        out = out.mean(dim=1)
-        out = self.dropout(out)
-        return self.fc(out)
+    def update(self, preds: np.ndarray) -> Optional[str]:
+        idx = int(np.argmax(preds))
+        conf = float(preds[idx])
+        self.history.append((idx, conf))
+        if len(self.history) > self.window_size:
+            self.history.pop(0)
 
-
-class WordModel(nn.Module):
-    def __init__(self, num_classes: int):
-        super().__init__()
-        self.lstm = nn.LSTM(INPUT_SIZE, 256, num_layers=3, batch_first=True, bidirectional=True, dropout=0.4)
-        self.fc = nn.Sequential(
-            nn.Linear(512, 256),
-            nn.BatchNorm1d(256),
-            nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(256, num_classes),
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        out, _ = self.lstm(x)
-        out = torch.mean(out, dim=1)
-        return self.fc(out)
-
-
-class CTCModel(nn.Module):
-    def __init__(self, vocab_size: int):
-        super().__init__()
-        self.lstm = nn.LSTM(INPUT_SIZE, 256, num_layers=3, batch_first=True, bidirectional=True, dropout=0.3)
-        self.fc = nn.Sequential(nn.Linear(512, 256), nn.ReLU(), nn.Dropout(0.3), nn.Linear(256, vocab_size))
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        out, _ = self.lstm(x)
-        out = self.fc(out)
-        return torch.nn.functional.log_softmax(out, dim=-1)
+        if len(self.history) == self.window_size:
+            recent_idxs = [h[0] for h in self.history]
+            if len(set(recent_idxs)) == 1:
+                avg_conf = np.mean([h[1] for h in self.history])
+                if avg_conf >= self.threshold:
+                    action = ACTIONS[self.history[-1][0]]
+                    if len(self.current_sentence) == 0 or action != self.current_sentence[-1]:
+                        self.current_sentence.append(action)
+                    if len(self.current_sentence) > 5:
+                        self.current_sentence = self.current_sentence[-5:]
+                    return action
+        return None
 
 
 class InferenceService:
     def __init__(self) -> None:
-        self.alphabet_model: Optional[AlphabetModel] = None
-        self.word_model: Optional[WordModel] = None
-        self.ctc_model: Optional[CTCModel] = None
-        self.alphabet: List[str] = []
-        self.words: List[str] = []
-        self.gloss_vocab: List[str] = []
-        self.reference_data: Dict[str, Any] = {}
+        self.keras_model: Any = None
+        self.keras_labels: List[str] = []
+        self.smoother = PredictionSmoother(window_size=5, threshold=0.5)
 
     def startup(self) -> None:
-        self.load_models()
-        self.load_reference_data()
+        logger.info("[INFERENCE_SERVICE] InferenceService starting up...")
+        self.load_keras_model()
+        logger.info("[INFERENCE_SERVICE] InferenceService startup complete.")
 
-    def load_models(self) -> None:
-        alphabet_path = ALPHABET_MODEL_PATH if ALPHABET_MODEL_PATH.exists() else LEGACY_ALPHABET_MODEL_PATH
-        word_path = WORD_MODEL_PATH if WORD_MODEL_PATH.exists() else LEGACY_WORD_MODEL_PATH
-        ctc_path = CTC_MODEL_PATH if CTC_MODEL_PATH.exists() else LEGACY_CTC_MODEL_PATH
-
-        if alphabet_path.exists():
-            ckpt = torch.load(alphabet_path, map_location=device, weights_only=False)
-            self.alphabet = ckpt["alphabet"]
-            self.alphabet_model = AlphabetModel(len(self.alphabet)).to(device)
-            self.alphabet_model.load_state_dict(ckpt["model_state_dict"])
-            self.alphabet_model.eval()
-
-        if word_path.exists():
-            ckpt = torch.load(word_path, map_location=device, weights_only=False)
-            self.words = ckpt["words"]
-            self.word_model = WordModel(len(self.words)).to(device)
-            self.word_model.load_state_dict(ckpt["model_state_dict"])
-            self.word_model.eval()
-
-        if ctc_path.exists():
-            ckpt = torch.load(ctc_path, map_location=device, weights_only=False)
-            self.gloss_vocab = ckpt.get("gloss_vocab", [])
-            if self.gloss_vocab:
-                self.ctc_model = CTCModel(len(self.gloss_vocab)).to(device)
-                self.ctc_model.load_state_dict(ckpt["model_state_dict"])
-                self.ctc_model.eval()
-
-    def load_reference_data(self) -> None:
-        path = TRAINING_DATA_PATH if TRAINING_DATA_PATH.exists() else LEGACY_TRAINING_DATA_PATH
-        if not path.exists():
+    def load_keras_model(self) -> None:
+        logger.info("[INFERENCE_SERVICE] Loading Keras model...")
+        if not KERAS_AVAILABLE:
+            logger.warning("[INFERENCE_SERVICE] Keras not available, skipping keras model")
             return
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        for item in data:
-            gloss = str(item.get("gloss", "")).lower().strip()
-            if gloss and gloss not in self.reference_data:
-                self.reference_data[gloss] = item.get("landmarks", [])
+        if not KERAS_MODEL_PATH.exists():
+            logger.warning(f"[INFERENCE_SERVICE] Keras model not found at {KERAS_MODEL_PATH}")
+            return
+        try:
+            self.keras_model = keras_load_model(KERAS_MODEL_PATH, compile=False)
+            if ACTIONS_META_PATH.exists():
+                with open(ACTIONS_META_PATH, 'r') as f:
+                    saved_actions = json.load(f)
+                self.keras_labels = saved_actions
+            else:
+                self.keras_labels = list(ACTIONS)
+            logger.info(f"[INFERENCE_SERVICE] Loaded model with actions: {self.keras_labels}")
+        except Exception as e:
+            logger.error(f"[INFERENCE_SERVICE] Failed to load model: {e}", exc_info=True)
+            self.keras_model = None
 
-    def _decode_ctc(self, logits: torch.Tensor) -> tuple[str, float]:
-        probs = torch.exp(logits)
-        pred_ids = torch.argmax(probs, dim=2).squeeze(0).cpu().numpy()
-        tokens: List[str] = []
-        confs: List[float] = []
-        prev = -1
-        for t, idx in enumerate(pred_ids):
-            if idx != 0 and idx != prev and idx < len(self.gloss_vocab):
-                tokens.append(self.gloss_vocab[idx])
-                confs.append(float(probs[0, t, idx].item()))
-            prev = idx
-        return " ".join(tokens), (float(np.mean(confs)) if confs else 0.0)
+    def predict_keras(self, keypoints_sequence: List[List[float]]) -> Dict[str, Any]:
+        if not self.keras_model:
+            self.load_keras_model()
+        if not self.keras_model:
+            return {"sign": "model_not_loaded", "confidence": 0.0}
 
-    def recognize(self, landmarks_sequence: List[Any], mode: str = "word") -> Dict[str, Any]:
-        mode = (mode or "word").lower()
-        seq = preprocess_sequence(landmarks_sequence, mode=mode)
-        if seq is None:
-            return {"sign": "unknown", "confidence": 0.0, "gloss": "", "sentence": ""}
+        seq = np.array(keypoints_sequence, dtype=np.float32)
+        if seq.shape[0] != 30:
+            if seq.shape[0] < 30:
+                pad = np.zeros((30 - seq.shape[0], seq.shape[1]), dtype=np.float32)
+                seq = np.vstack([seq, pad])
+            else:
+                seq = seq[:30]
 
-        x = torch.tensor(seq).unsqueeze(0).to(device)
-        if mode == "alphabet" and self.alphabet_model:
-            with torch.no_grad():
-                out = self.alphabet_model(x)
-                probs = torch.softmax(out, dim=1)
-                conf, pred = torch.max(probs, 1)
-            label = self.alphabet[pred.item()]
-            return {"sign": label, "confidence": float(conf.item()), "gloss": label, "sentence": label}
+        seq = np.expand_dims(seq, axis=0)
+        preds = self.keras_model.predict(seq, verbose=0)[0]
 
-        if mode == "sentence" and self.ctc_model:
-            with torch.no_grad():
-                out = self.ctc_model(x)
-            sentence, conf = self._decode_ctc(out)
-            return {"sign": "sequence", "confidence": conf, "gloss": sentence, "sentence": sentence}
-
-        if self.word_model:
-            with torch.no_grad():
-                out = self.word_model(x)
-                probs = torch.softmax(out, dim=1)
-                conf, pred = torch.max(probs, 1)
-            label = self.words[pred.item()]
-            return {"sign": label, "confidence": float(conf.item()), "gloss": label, "sentence": label}
-
-        return {"sign": "unknown", "confidence": 0.0, "gloss": "", "sentence": ""}
-
-    def score(self, landmarks_sequence: List[Any], reference_sign: str, mode: str = "word") -> Dict[str, Any]:
-        user = preprocess_sequence(landmarks_sequence, mode=mode)
-        ref_raw = self.reference_data.get(reference_sign.lower())
-        if not ref_raw:
-            return {
-                "score": 0.0,
-                "feedback": "Reference sign not found in dataset.",
-                "details": {"accuracy": 0, "completeness": 0, "timing": 0},
-                "is_correct": False,
-                "reference_sign": reference_sign,
-                "user_sign": "unknown",
-            }
-
-        reference = preprocess_sequence(ref_raw, mode=mode)
-        if user is None or reference is None:
-            return {
-                "score": 0.0,
-                "feedback": "Unable to process sign sequence.",
-                "details": {"accuracy": 0, "completeness": 0, "timing": 0},
-                "is_correct": False,
-                "reference_sign": reference_sign,
-                "user_sign": "unknown",
-            }
-
-        details = compute_overall_score(user, reference)
-        prediction = self.recognize(landmarks_sequence, mode=mode)
-        return {
-            "score": details["score"],
-            "feedback": generate_feedback(details["score"]),
-            "details": {
-                "accuracy": details["accuracy"],
-                "completeness": details["completeness"],
-                "timing": details["timing"],
-            },
-            "is_correct": prediction["sign"].lower() == reference_sign.lower(),
-            "reference_sign": reference_sign,
-            "user_sign": prediction["sign"],
-        }
+        stable_action = self.smoother.update(preds)
+        if stable_action:
+            confidence = float(preds[ACTIONS.index(stable_action)])
+            logger.info(f"Stable: {stable_action} ({confidence:.2f})")
+            return {"sign": stable_action, "confidence": confidence}
+        else:
+            idx = int(np.argmax(preds))
+            label = self.keras_labels[idx] if idx < len(self.keras_labels) else "unknown"
+            conf = float(preds[idx])
+            logger.info(f"Fallback (not yet stable): {label} ({conf:.2f})")
+            return {"sign": label, "confidence": conf}
 
 
 inference_service = InferenceService()

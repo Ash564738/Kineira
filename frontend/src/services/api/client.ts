@@ -1,5 +1,4 @@
 import { Attempt, AttemptPayload, Lesson, PredictionResult, Progress, ScoringResult } from "../../types/api";
-import { FrameLandmarks } from "../../types/landmarks";
 import { API_BASE_URL } from "./config";
 
 async function parseJson<T>(res: Response): Promise<T> {
@@ -10,20 +9,20 @@ async function parseJson<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export async function recognizeSign(sequence: FrameLandmarks[], mode: "alphabet" | "word" | "sentence") {
-  const res = await fetch(`${API_BASE_URL}/recognize-sign`, {
+export async function translateSign(keypointsSequence: number[][]) {
+  const res = await fetch(`${API_BASE_URL}/translate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ landmarks_sequence: sequence, mode }),
+    body: JSON.stringify({ keypoints_sequence: keypointsSequence }),
   });
   return parseJson<PredictionResult>(res);
 }
 
-export async function scoreSign(sequence: FrameLandmarks[], referenceSign: string, mode = "alphabet") {
-  const res = await fetch(`${API_BASE_URL}/score-sign`, {
+export async function scoreGesture(userSequence: number[][], referenceSequence: number[][]) {
+  const res = await fetch(`${API_BASE_URL}/score`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ landmarks_sequence: sequence, reference_sign: referenceSign, mode }),
+    body: JSON.stringify({ user_sequence: userSequence, reference_sequence: referenceSequence }),
   });
   return parseJson<ScoringResult>(res);
 }
