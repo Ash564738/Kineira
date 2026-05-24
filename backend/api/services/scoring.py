@@ -7,8 +7,8 @@ from ml.hand_utils import LEFT_HAND_INDICES, RIGHT_HAND_INDICES
 
 logger = logging.getLogger(__name__)
 
+
 def compute_cosine_similarity(seq1: np.ndarray, seq2: np.ndarray) -> float:
-    """Tính cosine similarity giữa hai chuỗi, trả về giá trị [-1, 1]."""
     if seq1.shape != seq2.shape:
         min_len = min(len(seq1), len(seq2))
         seq1 = seq1[:min_len]
@@ -26,29 +26,68 @@ def compute_cosine_similarity(seq1: np.ndarray, seq2: np.ndarray) -> float:
             count += 1
     return total_sim / count if count > 0 else 0.0
 
+
+def compute_euclidean_similarity(
+    seq1: np.ndarray,
+    seq2: np.ndarray,
+    midpoint: float = 0.5,
+    steepness: float = 0.1
+) -> float:
+    """
+    Tính độ tương đồng dựa trên khoảng cách Euclid, dùng hàm sigmoid
+    để tạo tương phản cao giữa đúng và sai.
+    similarity = 1 / (1 + exp((avg_dist - midpoint) / steepness))
+    """
+    if seq1.shape != seq2.shape:
+        min_len = min(len(seq1), len(seq2))
+        seq1 = seq1[:min_len]
+        seq2 = seq2[:min_len]
+
+    total_dist = 0.0
+    count = 0
+    for f1, f2 in zip(seq1, seq2):
+        dist = np.linalg.norm(f1.flatten() - f2.flatten())
+        total_dist += dist
+        count += 1
+
+    avg_dist = total_dist / count if count > 0 else 0.0
+    similarity = 1.0 / (1.0 + np.exp((avg_dist - midpoint) / steepness))
+    return float(similarity)
+
+
 def compute_hand_aware_score(
     user_seq: np.ndarray,
     reference_seq: np.ndarray,
     predicted_sign: Optional[str] = None,
-    expected_sign: Optional[str] = None
+    expected_sign: Optional[str] = None,
+    active_hand: str = "both",
+    hand_sim_override: Optional[float] = None
 ) -> Dict[str, float]:
-    """
-    Tính điểm tập trung vào bàn tay (80%) + tư thế (15%) + mặt (5%).
-    Nếu predicted_sign != expected_sign → phạt x0.3.
-    """
-    # Tách các phần
-    user_hand = np.concatenate([user_seq[:, LEFT_HAND_INDICES], user_seq[:, RIGHT_HAND_INDICES]], axis=1)
-    ref_hand = np.concatenate([reference_seq[:, LEFT_HAND_INDICES], reference_seq[:, RIGHT_HAND_INDICES]], axis=1)
+    # Xác định chỉ số tay cần so sánh
+    if active_hand == "left":
+        hand_indices = list(LEFT_HAND_INDICES)
+    elif active_hand == "right":
+        hand_indices = list(RIGHT_HAND_INDICES)
+    else:
+        hand_indices = list(LEFT_HAND_INDICES) + list(RIGHT_HAND_INDICES)
 
+    # Tay
+    if hand_sim_override is not None:
+        hand_sim = hand_sim_override
+    else:
+        user_hand = user_seq[:, hand_indices]
+        ref_hand = reference_seq[:, hand_indices]
+        hand_sim = compute_euclidean_similarity(user_hand, ref_hand)
+
+    # Pose
     user_pose = user_seq[:, 126:126+23*4]
     ref_pose = reference_seq[:, 126:126+23*4]
+    pose_sim = compute_euclidean_similarity(user_pose, ref_pose)
 
+    # Face
     user_face = user_seq[:, 126+23*4:]
     ref_face = reference_seq[:, 126+23*4:]
-
-    hand_sim = compute_cosine_similarity(user_hand, ref_hand)
-    pose_sim = compute_cosine_similarity(user_pose, ref_pose)
-    face_sim = compute_cosine_similarity(user_face, ref_face)
+    face_sim = compute_euclidean_similarity(user_face, ref_face)
 
     base_score = hand_sim * 0.80 + pose_sim * 0.15 + face_sim * 0.05
 
@@ -58,7 +97,6 @@ def compute_hand_aware_score(
         logger.warning(f"[SCORING] Wrong sign ({predicted_sign} vs {expected_sign}), penalty x{penalty}")
 
     final_score = max(0.0, min(100.0, base_score * penalty * 100))
-
     return {
         "score": round(final_score, 2),
         "hand_score": round(hand_sim * 100, 2),
@@ -69,9 +107,6 @@ def compute_hand_aware_score(
         "expected_sign": expected_sign,
     }
 
-def compute_overall_score(user_seq, reference_seq, **kwargs):
-    """Hàm bao bọc để tương thích với code cũ."""
-    return compute_hand_aware_score(user_seq, reference_seq, **kwargs)
 
 def generate_feedback(score: float) -> str:
     if score >= 90:

@@ -1,4 +1,3 @@
-# api/routers/recognition.py
 import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -8,7 +7,7 @@ import sys
 from pathlib import Path
 
 from api.services.inference import inference_service, normalize_relative_hand
-from api.services.scoring import compute_hand_aware_score, generate_feedback
+from api.services.scoring import compute_cosine_similarity, compute_hand_aware_score, generate_feedback, compute_euclidean_similarity
 
 backend_dir = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(backend_dir))
@@ -23,17 +22,21 @@ from ml.hand_utils import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+
 class TranslateRequest(BaseModel):
     keypoints_sequence: List[List[float]]
+
 
 class TranslateResponse(BaseModel):
     sign: str
     confidence: float
 
+
 class ScoreRequest(BaseModel):
     user_sequence: List[List[float]]
     reference_sequence: Optional[List[List[float]]] = None
     target_sign: Optional[str] = None
+
 
 class ScoreResponse(BaseModel):
     score: float
@@ -47,6 +50,7 @@ class ScoreResponse(BaseModel):
     hand_similarity: Optional[float] = None
     finger_details: Optional[Dict[str, Any]] = None
 
+
 @router.post("/translate", response_model=TranslateResponse)
 async def translate(req: TranslateRequest) -> TranslateResponse:
     logger.info("=" * 80)
@@ -57,7 +61,7 @@ async def translate(req: TranslateRequest) -> TranslateResponse:
         if not result.get("stable", False):
             logger.info("[TRANSLATE] Not yet stable, returning pending")
             return TranslateResponse(sign="pending", confidence=0.0)
-        
+
         response = TranslateResponse(
             sign=result.get("sign", "unknown"),
             confidence=result.get("confidence", 0.0)
@@ -71,13 +75,14 @@ async def translate(req: TranslateRequest) -> TranslateResponse:
         logger.info("TRANSLATE PROCESS ENDED")
         logger.info("=" * 80)
 
+
 @router.post("/score", response_model=ScoreResponse)
 async def score(req: ScoreRequest) -> ScoreResponse:
     logger.info("=" * 80)
     logger.info("SCORING PROCESS STARTED")
     logger.info("=" * 80)
 
-    # 1. Xác định tay người dùng từ dữ liệu gốc (chưa normalize)
+    # 1. Xác định tay người dùng
     raw_user_seq = np.array(req.user_sequence, dtype=np.float32)
     has_left, has_right = detect_active_hands(raw_user_seq)
     if has_left and not has_right:
@@ -85,7 +90,7 @@ async def score(req: ScoreRequest) -> ScoreResponse:
     elif has_right and not has_left:
         user_hand = "right"
     else:
-        user_hand = "both"  # hoặc không xác định, fallback
+        user_hand = "both"
 
     # 2. Tải reference phù hợp
     reference_seq = None
@@ -98,7 +103,6 @@ async def score(req: ScoreRequest) -> ScoreResponse:
         elif user_hand == "right":
             ref_path = ref_dir / f"ref_{req.target_sign}_right.npy"
         else:
-            # fallback: dùng file gốc nếu có, hoặc _right
             ref_path = ref_dir / f"ref_{req.target_sign}.npy"
             if not ref_path.exists():
                 ref_path = ref_dir / f"ref_{req.target_sign}_right.npy"
@@ -110,37 +114,23 @@ async def score(req: ScoreRequest) -> ScoreResponse:
     else:
         raise HTTPException(status_code=400, detail="Either reference_sequence or target_sign must be provided")
 
-    user_seq = raw_user_seq
-    if user_seq.size == 0 or reference_seq.size == 0:
+    if raw_user_seq.size == 0 or reference_seq.size == 0:
         raise HTTPException(status_code=400, detail="Sequences cannot be empty")
 
-    # 3. Normalize user sequence (max-abs)
+    # 3. Chuẩn hóa
     user_seq_rel = normalize_relative_hand(raw_user_seq)
     user_seq_norm = inference_service.normalize_sequence(user_seq_rel)
-    user_normalized = user_seq_norm
-
-    # 4. KHÔNG cần normalize_hand_representation nữa, vì reference đã cùng bên tay với user
     user_normalized = user_seq_norm
     ref_normalized = reference_seq
     norm_method = "same_hand_reference"
 
-    # 5. Dự đoán ký hiệu (sử dụng predict_keras, nó sẽ tự normalize và dự đoán)
+    # 4. Dự đoán ký hiệu
     pred_result = inference_service.predict_keras(req.user_sequence)
     predicted_sign = pred_result.get("sign", "unknown")
     confidence = pred_result.get("confidence", 0.0)
     logger.info(f"[SCORE] Predicted sign: {predicted_sign} ({confidence:.2%})")
 
-    # 6. Tính điểm tổng
-    expected_sign = req.target_sign
-    score_dict = compute_hand_aware_score(
-        user_normalized, ref_normalized,
-        predicted_sign=predicted_sign,
-        expected_sign=expected_sign
-    )
-    overall_score = score_dict["score"]
-    feedback = generate_feedback(overall_score)
-
-    # 7. Phân tích ngón tay: chỉ so sánh tay đang dùng
+    # 5. Phân tích ngón tay (để lấy finger similarity và tính hand_sim sau)
     if user_hand == "left":
         user_hand_indices = list(LEFT_HAND_INDICES)
         ref_hand_indices = list(LEFT_HAND_INDICES)
@@ -169,49 +159,52 @@ async def score(req: ScoreRequest) -> ScoreResponse:
                 user_finger = compare_hand[:, cols]
                 ref_finger = ref_compare[:, cols]
 
-                flat_user = user_finger.reshape(-1)
-                flat_ref = ref_finger.reshape(-1)
+                cos_sim = compute_cosine_similarity(user_finger, ref_finger)
+                euclidean_sim = compute_euclidean_similarity(user_finger, ref_finger)
 
-                nu = np.linalg.norm(flat_user)
-                nr = np.linalg.norm(flat_ref)
-                if nu > 1e-8 and nr > 1e-8:
-                    cos_sim = float(np.dot(flat_user, flat_ref) / (nu * nr))
-                else:
-                    cos_sim = 0.0
-
-                if cos_sim > 0.95:
+                if euclidean_sim > 0.85:
                     suggestion = "Perfect"
-                elif cos_sim > 0.85:
+                elif euclidean_sim > 0.7:
                     suggestion = "Good, slight adjustment"
-                elif cos_sim > 0.7:
+                elif euclidean_sim > 0.5:
                     suggestion = "Needs improvement"
                 else:
                     suggestion = "Significant deviation"
 
                 finger_feedback[finger] = {
-                    "similarity": round(cos_sim, 4),
+                    "similarity": round(euclidean_sim, 4),
                     "cosine_similarity": round(cos_sim, 4),
                     "suggestion": suggestion
                 }
         except Exception as e:
             logger.warning(f"[SCORE] Finger details failed: {e}")
 
-    # 8. Hand similarity tổng thể (cosine trên tay đang dùng)
+    # 6. Tính Hand similarity tổng thể dựa trên trung bình các ngón tay
     hand_sim_pct = 0.0
-    if len(user_hand_indices) > 0:
+    if finger_feedback:
+        hand_sim_pct = sum(v["similarity"] for v in finger_feedback.values()) / len(finger_feedback) * 100
+    else:
         try:
             compare_hand = user_normalized[:, user_hand_indices]
             ref_compare = ref_normalized[:, ref_hand_indices]
-            flat_user = compare_hand.flatten()
-            flat_ref = ref_compare.flatten()
-            nu = np.linalg.norm(flat_user)
-            nr = np.linalg.norm(flat_ref)
-            if nu > 1e-8 and nr > 1e-8:
-                hand_sim_pct = float(np.dot(flat_user, flat_ref) / (nu * nr) * 100)
+            hand_sim_pct = float(compute_euclidean_similarity(compare_hand, ref_compare) * 100)
         except Exception as e:
             logger.warning(f"[SCORE] Hand similarity failed: {e}")
 
     logger.info(f"[SCORE] Hand similarity: {hand_sim_pct:.1f}%")
+
+    # 7. Tính điểm tổng (truyền hand_sim_override)
+    expected_sign = req.target_sign
+    score_dict = compute_hand_aware_score(
+        user_normalized, ref_normalized,
+        predicted_sign=predicted_sign,
+        expected_sign=expected_sign,
+        active_hand=user_hand,
+        hand_sim_override=hand_sim_pct / 100.0 if hand_sim_pct > 0 else None
+    )
+    overall_score = score_dict["score"]
+    feedback = generate_feedback(overall_score)
+
     logger.info("SCORING PROCESS COMPLETED")
 
     return ScoreResponse(
@@ -232,6 +225,7 @@ async def score(req: ScoreRequest) -> ScoreResponse:
         hand_similarity=hand_sim_pct,
         finger_details=finger_feedback,
     )
+
 
 @router.post("/translate/reset")
 async def reset_translate():

@@ -17,9 +17,17 @@ export interface ScoringResult {
   sign?: string;
   confidence?: number;
   hand_similarity?: number;
-  finger_details?: Record<string, { similarity: number; suggestion: string }>;
+  finger_details?: Record<string, FingerDetail>;
   overall_score?: number; // nếu bạn dùng tên này trong JSX
 }
+
+export interface FingerDetail {
+  similarity: number;          // combined
+  cosine_similarity: number;
+  magnitude_similarity: number;
+  suggestion: string;
+}
+
 export interface Lesson {
   id: number;
   title: string;

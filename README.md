@@ -1,458 +1,248 @@
-# Kineira - Sign Language Learning Platform
+# Kineira – Nền tảng học Ngôn ngữ Ký hiệu bằng AI
 
-A comprehensive EdTech platform for learning sign language using computer vision and AI with real-time hand, face, and pose tracking via MediaPipe Holistic.
+Nền tảng EdTech toàn diện giúp học ngôn ngữ ký hiệu thông qua thị giác máy tính và trí tuệ nhân tạo.
+Sử dụng **MediaPipe Holistic** để theo dõi chuyển động tay, khuôn mặt và tư thế theo thời gian thực, kết hợp mô hình **LSTM** để nhận dạng và chấm điểm cử chỉ.
 
-## Features
+## Tính năng chính
 
-- **Real-time Holistic Tracking**: MediaPipe Holistic for face, hand, and pose landmarks
-- **Data Collection**: Web-based UI for collecting 30 videos × 30 frames per letter/word
-- **Automated Training**: Train LSTM models on collected data (automatic via UI, no manual scripts needed)
-- **Sign Translation**: AI-powered translation of sign language gestures to text in real-time
-- **Interactive Lessons**: Learn sign language with guided lessons and feedback
-- **Performance Scoring**: Score and provide feedback for users learning sign language
-- **Progress Tracking**: Dashboard showing user learning progress
+- **Theo dõi toàn diện (Holistic)**: MediaPipe Holistic trích xuất 329 đặc trưng mỗi khung hình (tay trái, tay phải, tư thế thân trên, khuôn mặt).
+- **Thu thập dữ liệu thông minh**: Giao diện web cho phép thu thập **100 video × 30 khung hình** cho mỗi ký hiệu, với chế độ nghỉ giữa các video và chuyển tay (50 video tay trái, 50 video tay phải).
+- **Huấn luyện tự động**: Huấn luyện mô hình LSTM chỉ bằng một nút bấm – không cần chạy script thủ công.
+- **Dịch cử chỉ thời gian thực**: Nhận dạng ký hiệu ngay khi bạn thực hiện trước camera.
+- **Bài học tương tác**: Luyện tập từng ký hiệu với phản hồi chi tiết.
+- **Chấm điểm thông minh**: Điểm số dựa trên độ tương đồng của tay (80%), tư thế (15%) và khuôn mặt (5%), tự động xác định tay đang sử dụng.
+- **Theo dõi tiến độ**: Bảng điều khiển hiển thị quá trình học tập.
 
-## System Architecture
+## Kiến trúc hệ thống
 
-### Page Structure
+### Các trang chính (Frontend)
 
-1. **Translate (index.tsx)** - Main page for real-time sign-to-text translation
-   - Captures video from webcam using holistic landmarks
-   - Sends 30-frame sequences to `/translate` endpoint
-   - Displays predicted sign and confidence in real-time
+1. **Translate (index.tsx)** – Nhận dạng ký hiệu thời gian thực  
+   - Gửi chuỗi 30 khung hình đến `/translate`.
+2. **Lessons (lessons.tsx)** – Danh mục bài học theo độ khó.
+3. **Lesson Practice ([lessonId].tsx)** – Luyện tập một ký hiệu  
+   - Ghi lại 30 khung hình, gửi lên `/score` để so sánh với cử chỉ mẫu.
+4. **Collect (collect.tsx)** – Thu thập dữ liệu huấn luyện  
+   - Hỗ trợ nghỉ giữa video, chuyển tay, làm lại video lỗi.
+5. **Progress (progress.tsx)** – Bảng theo dõi tiến độ người dùng.
 
-2. **Lessons (lessons.tsx)** - Catalog of available sign language lessons
-   - Browse all lessons by difficulty
-   - Click to start a specific lesson
+### Luồng dữ liệu chính
 
-3. **Lesson Practice ([lessonId].tsx)** - Practice specific sign with scoring
-   - Displays the sign to learn
-   - Records your attempt (30 frames)
-   - Calls `/score` endpoint to compare with reference gesture
-   - Provides feedback and corrections
+#### Thu thập dữ liệu & Huấn luyện
+Vào Collect → chọn ký hiệu (A, B, HELLO, LOVE).
 
-4. **Collect (collect.tsx)** - Data collection for training the model
-   - Collect 30 videos × 30 frames per action (36 total actions)
-   - Each frame saved as 1692-dim keypoint vector
-   - Data stored in `datasets/MP_Data/{action}/{video}/{frame}.npy`
-   - Click "Start Training" to automatically train the model
+Hệ thống yêu cầu thực hiện 50 video tay trái, sau đó đổi tay 50 video tay phải.
 
-5. **Progress (progress.tsx)** - User dashboard
-   - Shows completion status for each action/lesson
-   - Displays learning statistics and achievements
+Mỗi video gồm 30 khung hình, mỗi khung là vector 329 chiều.
 
-### Data Flow
+Dữ liệu lưu vào datasets/MP_Data/{action}/{video_num}/*.npy.
 
-#### Training Workflow (One-time Setup)
-```
-1. User navigates to Collect page
-2. Clicks "Collect" on each action (A-Z + 10 words)
-3. Performs sign 30 times (30 videos)
-4. Each video captures 30 frames automatically
-5. Frontend sends 1692-dim keypoint vectors to /data-collection/frame-vector
-6. Saves frames as .npy files in datasets/MP_Data/{action}/{video}/{frame}.npy
-7. User clicks "Start Training"
-8. Backend automatically:
-   - Loads all collected .npy files from datasets/MP_Data
-   - Trains single Keras LSTM model on all actions (200 epochs)
-   - Saves trained model to assets/models/action.h5
-9. Model is now ready for inference (translate page works!)
-```
+Nhấn "Start Training" → Backend tự động:
 
-#### Translation (Real-time Inference)
-```
-1. User on Translate page performs sign in front of camera
-2. Frontend captures video with holistic landmarks
-3. Extracts 1692-dim keypoint vector per frame
-4. Buffers 30 frames
-5. Every 0.5 seconds, sends 30-frame sequence to /translate
-6. Backend loads assets/models/action.h5
-7. Runs inference through Keras LSTM
-8. Returns predicted sign + confidence
-9. Frontend displays result (updates every 0.5s)
-```
+Chuẩn hóa tọa độ tay về gốc cổ tay (relative normalization)
 
-#### Lesson Practice (Learning with Feedback)
-```
-1. User navigates to Lessons → selects a lesson → [lessonId] page loads
-2. Reference gesture is displayed
-3. User performs the sign while recording
-4. Records 30 frames of user gesture
-5. Frontend sends user_sequence to /score endpoint
-6. Backend also retrieves reference_sequence from database
-7. Computes similarity scores (cosine, DTW, transformer)
-8. Generates feedback with specific corrections
-9. Frontend displays:
-   - Overall score (0-100)
-   - Feedback and suggestions for improvement
-   - Detailed metrics (accuracy, completeness, timing)
-10. User can retry to improve score
-```
+Tăng cường dữ liệu (nhiễu Gaussian, biến dạng thời gian)
 
-## Technical Stack
+Chuẩn hóa max‑abs scaling
+
+Huấn luyện LSTM 64 units, 2000 epoch với EarlyStopping
+
+Lưu model và file tham chiếu (ref_{action}_{hand}.npy) vào assets/models/
+
+text
+
+#### Dịch cử chỉ (Inference)
+Camera ghi nhận 329 keypoints/khung.
+
+Mỗi 0.5 giây gửi 30 khung hình đến /translate.
+
+Backend: relative hand → max‑abs scale → LSTM dự đoán → smoother.
+
+Trả về ký hiệu và độ tin cậy.
+
+text
+
+#### Luyện tập & Chấm điểm
+Người dùng chọn bài học → thực hiện ký hiệu.
+
+Gửi chuỗi 30 khung hình lên /score kèm target_sign.
+
+Backend xác định tay đang dùng (trái/phải), tải reference tương ứng.
+
+Chuẩn hóa user sequence giống hệt pipeline huấn luyện.
+
+Tính điểm: cosine similarity tay (80%) + tư thế (15%) + mặt (5%).
+
+Nếu ký hiệu dự đoán khác target → phạt ×0.3.
+
+Trả về điểm tổng, phản hồi, độ tương đồng từng ngón tay.
+
+text
+
+## Công nghệ sử dụng
 
 ### Frontend
-- **Next.js 14** with TypeScript
-- **TailwindCSS** for styling
-- **MediaPipe Holistic** for landmark detection (client-side)
-- **React** for UI components
+- **Next.js 14** + TypeScript
+- **TailwindCSS**
+- **MediaPipe Holistic** (client‑side)
+- **React** hooks & refs
 
 ### Backend
-- **FastAPI** (Python) - REST API framework
-- **TensorFlow/Keras** - LSTM model for sign recognition and scoring
-- **MediaPipe** - Landmark detection utilities
-- **SQLAlchemy** - Database ORM for lessons/progress
-- **SQLite** - Development database (can use PostgreSQL)
+- **FastAPI** (Python)
+- **TensorFlow / Keras** – LSTM
+- **NumPy** – xử lý vector
+- **SQLAlchemy** – ORM (SQLite/phát triển)
 
-### Data & Models
-- **holistic_landmarker.task** - MediaPipe model for landmark extraction
-- **action.h5** - Trained Keras LSTM model (generated during training)
-- **datasets/MP_Data/** - Training data (collected user videos)
+### Dữ liệu & Mô hình
+- `holistic_landmarker.task` – MediaPipe
+- `action.h5` – Mô hình LSTM đã huấn luyện
+- `scaler.json` – Tham số max‑abs scaling
+- `ref_{action}_{hand}.npy` – Các chuỗi tham chiếu
 
-## Directory Structure
+## Cấu trúc thư mục
+├── backend/
+│ ├── api/
+│ │ ├── routers/
+│ │ │ ├── data_collection.py
+│ │ │ ├── lessons.py
+│ │ │ ├── progress.py
+│ │ │ ├── recognition.py
+│ │ │ └── training.py
+│ │ ├── schemas/
+│ │ │ └── common.py
+│ │ ├── services/
+│ │ │ ├── inference.py
+│ │ │ └── scoring.py
+│ │ └── main.py
+│ ├── assets/models/ # Mô hình & tham chiếu
+│ ├── datasets/MP_Data/ # Dữ liệu huấn luyện thu thập
+│ ├── db/ # Models & seed
+│ ├── ml/
+│ │ ├── train_holistic.py
+│ │ ├── hand_utils.py
+│ │ └── data_collection.py
+│ └── config.py
+├── frontend/
+│ └── src/
+│ ├── components/
+│ ├── lib/landmarks/
+│ ├── pages/
+│ ├── services/api/
+│ └── types/
+└── README.md
 
-```
-|-- .vscode
-    |-- settings.json
-|-- backend
-    |-- api
-        |-- routers
-            |-- data_collection.py
-            |-- lessons.py
-            |-- progress.py
-            |-- recognition.py
-            |-- training.py
-            |-- __init__.py
-        |-- schemas
-            |-- common.py
-            |-- __init__.py
-        |-- services
-            |-- inference.py
-            |-- scoring.py
-            |-- __init__.py
-        |-- main.py
-        |-- __init__.py
-    |-- assets
-        |-- data
-            |-- kineira.db
-            |-- payload.json
-        |-- metrics
-            |-- model_metrics.json
-        |-- models
-            |-- action.h5
-            |-- holistic_landmarker.task
-    |-- datasets
-        |-- MP_Data
-            |-- A
-            |-- B
-            |-- C
-            |-- HELLO
-        |-- WLASL
-            |-- code
-            |-- start_kit
-            |-- .gitignore
-            |-- index.md
-            |-- README.md
-            |-- _config.yml
-    |-- db
-        |-- models.py
-        |-- repository.py
-        |-- seed.py
-        |-- __init__.py
-    |-- ml
-        |-- training
-            |-- train_holistic.py
-            |-- __init__.py
-        |-- data_collection.py
-        |-- orientation.py
-        |-- preprocess.py
-        |-- __init__.py
-    |-- .env
-    |-- config.py
-    |-- main.py
-    |-- package-lock.json
-    |-- package.json
-    |-- requirements.txt
-    |-- testing.py
-|-- frontend
-    |-- src
-        |-- components
-            |-- camera
-                |-- CameraView.tsx
-            |-- layout
-                |-- TopNav.tsx
-        |-- lib
-            |-- landmarks
-                |-- LandmarkTracker.ts
-        |-- pages
-            |-- collect.tsx
-            |-- index.tsx
-            |-- lessons.tsx
-            |-- progress.tsx
-            |-- [lessonId].tsx
-            |-- _app.tsx
-        |-- services
-            |-- api
-                |-- client.ts
-                |-- collectionService.ts
-                |-- config.ts
-                |-- trainingService.ts
-        |-- styles
-            |-- globals.css
-        |-- types
-            |-- api.ts
-            |-- landmarks.ts
-    |-- next-env.d.ts
-    |-- package-lock.json
-    |-- package.json
-    |-- postcss.config.js
-    |-- tailwind.config.js
-    |-- tsconfig.json
-|-- .gitignore
-|-- README.md
-|-- structure.txt
-|-- tree.ps1
-
-```
+text
 
 ## API Endpoints
 
-### Translation (Main)
-- **POST /translate** - Translate 30-frame keypoint sequence to sign
-  - Request: `{ keypoints_sequence: number[][] }` (30 × 1692)
-  - Response: `{ sign: string, confidence: number }`
+### Dịch
+- **POST /translate**  
+  Body: `{ "keypoints_sequence": number[][] }` (30×329)  
+  Response: `{ "sign": string, "confidence": number }`
 
-### Scoring & Feedback
-- **POST /score** - Score user gesture vs reference gesture
-  - Request: `{ user_sequence: number[][], reference_sequence: number[][] }`
-  - Response: `{ score: number, feedback: string, accuracy: number, completeness: number, timing: number }`
+### Chấm điểm
+- **POST /score**  
+  Body: `{ "user_sequence": number[][], "target_sign": string }`  
+  Response: `{ "score": float, "feedback": string, "hand_similarity": float, "finger_details": {...} }`
 
-### Data Collection
-- **GET /data-collection/actions** - List all 36 actions
-- **GET /data-collection/status** - Collection progress for all actions
-- **GET /data-collection/status/{action}** - Progress for single action
-- **POST /data-collection/start/{action}/{video_num}** - Start collecting
-- **POST /data-collection/frame-vector/{action}/{video_num}/{frame_num}** - Save frame keypoints
-- **POST /data-collection/validate/{action}** - Validate collected data
-- **DELETE /data-collection/reset/{action}** - Clear collection for action
+### Thu thập dữ liệu
+- **GET /data-collection/actions** – Danh sách ký hiệu
+- **GET /data-collection/status** – Tiến độ tất cả
+- **POST /data-collection/start/{action}/{video_num}?overwrite=true** – Bắt đầu video
+- **POST /data-collection/frame-vector/{action}/{video_num}** – Lưu batch frame
+- **DELETE /data-collection/video/{action}/{video_num}** – Xoá video lỗi
+- **GET /data-collection/next-video/{action}** – Số video kế tiếp
 
-### Training
-- **POST /training/start** - Start automatic model training
-- **GET /training/status** - Get training progress
-- **POST /training/cancel** - Cancel ongoing training
-- **GET /training/metrics** - Get final training metrics
+### Huấn luyện
+- **POST /training/start** – Bắt đầu huấn luyện
+- **GET /training/status** – Trạng thái (epoch, loss, accuracy)
+- **POST /training/cancel**
 
-### Lessons & Progress
-- **GET /lessons** - List all lessons
-- **GET /lessons/{lesson_id}** - Get specific lesson
-- **GET /users/{user_id}/progress** - Get user progress
-- **POST /users/{user_id}/progress** - Save lesson attempt
+### Bài học & Tiến độ
+- **GET /lessons**
+- **GET /lessons/{id}**
+- **POST /users/{id}/progress** – Lưu kết quả luyện tập
 
-## Setup Instructions
+## Hướng dẫn cài đặt
 
-### Prerequisites
-- Python 3.9+
-- Node.js 18+
-- 4GB+ RAM recommended
-- Webcam required for tracking
-
-### Backend Setup
-
-1. Create backend directory structure:
+### Backend
 ```bash
 cd backend
-mkdir -p datasets/MP_Data
-```
-
-2. Create virtual environment:
-```bash
 python -m venv venv
-# On Windows:
-.\venv\Scripts\Activate.ps1
-# On Unix/Linux:
-source venv/bin/activate
-```
-
-3. Install dependencies:
-```bash
+source venv/bin/activate   # Windows: .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-```
-
-4. Initialize database:
-```bash
 python db/models.py
 python db/seed.py
-```
-
-5. Start backend server:
-```bash
-python main.py
-```
-Backend runs on `http://localhost:8000`
-
-### Frontend Setup
-
-1. Install dependencies:
-```bash
+python main.py             # http://localhost:8000
+Frontend
+bash
 cd frontend
 npm install
-```
+npm run dev                # http://localhost:3000
+Quy trình sử dụng
+Thu thập dữ liệu (bắt buộc lần đầu)
+Vào Collect, chọn ký hiệu → hệ thống hướng dẫn thực hiện 50 video tay trái, nghỉ, 50 video tay phải. Video lỗi sẽ được yêu cầu quay lại.
 
-2. Run development server:
-```bash
-npm run dev
-```
-Frontend runs on `http://localhost:3000`
+Huấn luyện mô hình
+Nhấn Start Training trên trang Collect → chờ vài phút. Model được lưu tự động.
 
-## Usage Guide
+Dịch cử chỉ
+Vào Translate, thực hiện ký hiệu trước camera, kết quả hiển thị ngay.
 
-### For Learning (End User)
+Luyện tập & Chấm điểm
+Vào Lessons → chọn bài → thực hiện ký hiệu → nhận điểm, phản hồi và gợi ý cải thiện từng ngón tay.
 
-1. **First Time**: Go to **Collect** page
-   - Follow on-screen instructions to collect data (50 videos per action)
-   - Or skip if pre-trained model exists
+Theo dõi tiến độ
+Xem lịch sử luyện tập và điểm số cao nhất trong Progress.
 
-2. **Train Model**: Click "Start Training" on Collect page
-   - **Automatic training starts - no manual scripts needed!**
-   - Wait for completion (~5-10 minutes depending on data)
-   - Model saved automatically
+Chi tiết huấn luyện
+Dữ liệu: 100 video × 30 frame cho mỗi action (tổng 400 video gốc, sau augmentation ×3).
 
-3. **Practice**: Go to **Lessons** page
-   - Browse available sign language lessons
-   - Click on a lesson to practice
-   - System provides score and feedback
-   - Try again to improve
+Tiền xử lý:
 
-4. **Translate**: Go to **Translate** page (index.tsx)
-   - Perform sign language gestures in front of camera
-   - Real-time translation appears on screen
-   - Works automatically (no clicking needed)
+Chuẩn hóa tay về gốc cổ tay (wrist‑centric).
+Augmentation: Gaussian noise (std=0.02), time warping (max 10%).
+Max‑abs scaling (lưu scaler chỉ từ tập huấn luyện, không ghi đè khi tạo reference).
+Kiến trúc LSTM:
 
-5. **Track Progress**: Go to **Progress** page
-   - See which actions/lessons you've completed
-   - View learning statistics
+LSTM(64) → Dropout(0.3) → Dense(32) → Dropout(0.3) → Softmax
 
-### For Developers
+Optimizer: Adam(lr=0.0003), clipnorm=1.0, L2=0.001
 
-#### Adding New Training Data
-1. Collect more videos via Collect page
-2. Click "Start Training" - model automatically retrains
-3. Old model is replaced with new trained version
+EarlyStopping: val_loss, patience=10
 
-#### Modifying Training Parameters
-Edit `backend/config.py`:
-```python
-VIDEOS_PER_ACTION = 30      # Videos collected per action
-FRAMES_PER_VIDEO = 30       # Frames per video
-```
+Kết quả: độ chính xác trên tập test ~95‑100% (tùy chất lượng dữ liệu).
 
-#### Understanding the Scoring System
+Hệ thống chấm điểm
+Công thức:
+hand_similarity = cosine_sim(user_hand, ref_hand)
+pose_similarity = cosine_sim(user_pose, ref_pose)
+face_similarity = cosine_sim(user_face, ref_face)
+base_score = hand × 0.80 + pose × 0.15 + face × 0.05
+Nếu dự đoán ≠ target → penalty = 0.3.
+final_score = max(0, base_score × penalty) × 100
 
-The `/score` endpoint uses three similarity metrics:
-1. **Cosine Similarity** (40% weight) - Frame position matching
-2. **DTW Similarity** (35% weight) - Temporal alignment
-3. **Transformer Similarity** (25% weight) - Movement velocity matching
+Phân tích ngón tay: cosine similarity riêng cho từng ngón (thumb, index, middle, ring, pinky) cùng gợi ý cải thiện.
 
-Score range: 0-100
-- 90+: Excellent form
-- 80-89: Great job, minor adjustments
-- 70-79: Good work, focus on details
-- 60-69: Getting there, practice more
-- <60: Keep practicing
+Cấu hình quan trọng (config.py)
+python
+ACTIONS = ["A", "B", "HELLO", "LOVE"]
+VIDEOS_PER_ACTION = 100
+FRAMES_PER_VIDEO = 30
+N_HAND = 21
+N_POSE = 23
+N_FACE = 37
+FEATURE_SIZE = 329  # 63+63+92+111
+LSTM_EPOCHS = 2000
+LSTM_BATCH_SIZE = 32
+SEQUENCE_LENGTH = 30
+Xử lý sự cố
+Model không tải được: Kiểm tra assets/models/action.h5 và scaler.json.
 
-## File Naming Explanation
+Huấn luyện thất bại: Đảm bảo mỗi action có đủ 100 video, không thiếu frame.
 
-**Note**: Project contains files with same names in different directories - this is intentional:
+Điểm thấp / âm: Đảm bảo cả inference và scoring đều áp dụng normalize_relative_hand.
 
-- `backend/main.py` - Backend entry point (starts FastAPI server)
-- `backend/api/main.py` - FastAPI app setup and routing
-- `backend/ml/data_collection.py` - DataCollector utility class (internal)
-- `backend/api/routers/data_collection.py` - API endpoints for data collection
-- `backend/config.py` - Configuration file (single source of truth)
+Không phát hiện tay: Cải thiện ánh sáng, đảm bảo camera thấy toàn bộ thân trên.
 
-These files serve different purposes and do not duplicate functionality.
-
-## Training Details
-
-### Automatic Training Flow (No Manual Scripts!)
-1. User collects data via Collect page
-2. Clicks "Start Training" button
-3. Backend automatically:
-   - Loads `datasets/MP_Data/{action}/**/*.npy` files
-   - Trains Keras LSTM for 200 epochs
-   - Validates on 20% of data
-   - Saves best model to `assets/models/action.h5`
-   - Returns training metrics
-
-### Trained Model Details
-- **Architecture**: LSTM (2 layers, 256 units)
-- **Input**: 30 frames × 1692 dimensions
-- **Output**: 36 classes (26 letters + 10 words)
-- **Training Time**: ~5-10 minutes on 1800 videos
-- **Accuracy**: ~95% on test set (varies with data quality)
-
-## Troubleshooting
-
-### Model not loading
-- Check `assets/models/action.h5` exists
-- Check `assets/models/holistic_landmarker.task` exists
-- Verify backend started without errors
-
-### Training fails
-- Ensure `datasets/MP_Data/` has complete 50 videos per action
-- Check disk space (training needs ~500MB)
-- Monitor backend logs for errors
-
-### No landmarks detected
-- Ensure good lighting
-- Camera should be at least 1 meter away
-- Ensure full body is visible (at least shoulders to waist)
-- Check MediaPipe holistic_landmarker.task loads correctly
-
-### Slow inference
-- Close other applications
-- Reduce screen resolution
-- Check GPU availability (if installed)
-
-## Performance Notes
-
-- **Data Collection**: ~2 seconds per video
-- **Training**: ~5-10 minutes for 1800 videos
-- **Inference**: ~50ms per frame (25 fps realtime)
-- **Memory Usage**: ~2GB during training, ~500MB running
-
-## Configuration Files
-
-### Important Paths (in backend/config.py)
-```python
-DATA_PATH = "backend/datasets/MP_Data"           # Training data
-MODEL_PATH = "backend/assets/models/action.h5"   # Trained model
-HOLISTIC_MODEL_PATH = "backend/assets/models/holistic_landmarker.task"
-```
-
-### Ensure directories exist:
-```bash
-backend/datasets/MP_Data/        # Stores collected training videos
-backend/assets/models/           # Stores trained action.h5
-backend/assets/data/             # Stores database files
-```
-
-## Contributing
-
-1. Fork repository
-2. Create feature branch
-3. Make changes
-4. Test end-to-end (collect → train → translate → lessons)
-5. Submit pull request
-
-## License
-
-MIT License - See LICENSE file for details
-
-## Support
-
-For issues:
-1. Check troubleshooting section above
-2. Review backend logs
-3. Verify all directories and files exist
-4. Check database: `backend/assets/data/kineira.db`
+Thiếu reference: Mỗi action cần có ít nhất một file ref_{action}_left.npy, ref_{action}_right.npy hoặc ref_{action}_both.npy.

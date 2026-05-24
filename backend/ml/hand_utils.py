@@ -24,11 +24,13 @@ BODY_INDICES = np.arange(RIGHT_HAND_END, 329)   # 126..328 (Pose + Face)
 
 # ========== Các hàm giữ nguyên ==========
 def detect_active_hands(sequence: np.ndarray) -> Tuple[bool, bool]:
-    left_nonzero = np.count_nonzero(sequence[:, LEFT_HAND_START:LEFT_HAND_END])
-    right_nonzero = np.count_nonzero(sequence[:, RIGHT_HAND_START:RIGHT_HAND_END])
-    threshold = 20
-    has_left = left_nonzero > threshold
-    has_right = right_nonzero > threshold
+    left_data = sequence[:, LEFT_HAND_START:LEFT_HAND_END]
+    right_data = sequence[:, RIGHT_HAND_START:RIGHT_HAND_END]
+    left_nonzero = np.count_nonzero(left_data)
+    right_nonzero = np.count_nonzero(right_data)
+    threshold = 100
+    has_left = left_nonzero > threshold and np.var(left_data) > 1e-4
+    has_right = right_nonzero > threshold and np.var(right_data) > 1e-4
     return has_left, has_right
 
 def detect_hand_activity_per_frame(sequence: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
