@@ -10,15 +10,16 @@ export interface ScoringResult {
   completeness: number;
   timing: number;
   details: {
-    completeness: any;
-    timing: any;
-    accuracy: any;
     cosine_similarity: number;
     dtw_similarity: number;
     transformer_similarity: number;
   };
+  sign?: string;
+  confidence?: number;
+  hand_similarity?: number;
+  finger_details?: Record<string, { similarity: number; suggestion: string }>;
+  overall_score?: number; // nếu bạn dùng tên này trong JSX
 }
-
 export interface Lesson {
   id: number;
   title: string;

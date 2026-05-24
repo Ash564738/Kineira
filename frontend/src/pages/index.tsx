@@ -2,10 +2,10 @@ import React, { useState, useRef, useEffect } from "react";
 import CameraView from "../components/camera/CameraView";
 import TopNav from "../components/layout/TopNav";
 import { FRAMES_PER_VIDEO, FEATURE_SIZE, FrameSample } from "../types/landmarks";
+import { resetTranslate } from "@/services/api/client";
 
-const COOLDOWN_MS = 2000;  // thời gian nghỉ sau mỗi lần dự đoán (ms)
+const COOLDOWN_MS = 500;
 
-// Debug logging helper
 const log = {
   info: (msg: string, data?: any) => console.log(`[TRANSLATE_PAGE] INFO: ${msg}`, data || ''),
   debug: (msg: string, data?: any) => console.debug(`[TRANSLATE_PAGE] DEBUG: ${msg}`, data || ''),
@@ -21,20 +21,17 @@ const Translate: React.FC = () => {
 
   const isTranslatingRef = useRef(false);
   const keypointsBufferRef = useRef<number[][]>([]);
-  const cooldownRef = useRef(false);          // đang trong thời gian nghỉ
+  const cooldownRef = useRef(false);
   const cooldownTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Đồng bộ isTranslating vào ref
   useEffect(() => {
     isTranslatingRef.current = isTranslating;
     log.info(`Translation mode ${isTranslating ? 'ENABLED' : 'DISABLED'}`);
-    // Khi bắt đầu dịch, reset buffer và cooldown
     if (isTranslating) {
       keypointsBufferRef.current = [];
       cooldownRef.current = false;
       if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
     } else {
-      // Dừng dịch: hủy cooldown nếu có
       if (cooldownTimerRef.current) {
         clearTimeout(cooldownTimerRef.current);
         cooldownTimerRef.current = null;
@@ -42,13 +39,11 @@ const Translate: React.FC = () => {
     }
   }, [isTranslating]);
 
-  // Hàm gọi API translate
   const translateSequence = async (sequence: number[][]) => {
     log.info("=".repeat(60));
     log.info("TRANSLATE API CALL STARTED");
     log.info("=".repeat(60));
     log.info(`Sending translation request - sequence length: ${sequence.length} frames`);
-    log.debug(`Sequence shape: ${sequence.length} x ${sequence[0]?.length || 0}`);
 
     try {
       const res = await fetch("http://localhost:8000/translate", {
@@ -57,7 +52,6 @@ const Translate: React.FC = () => {
         body: JSON.stringify({ keypoints_sequence: sequence })
       });
 
-      log.debug(`API response status: ${res.status}`);
       if (!res.ok) throw new Error(`API error ${res.status}`);
 
       const data = await res.json();
@@ -66,9 +60,18 @@ const Translate: React.FC = () => {
       log.info("TRANSLATE API CALL COMPLETED");
       log.info("=".repeat(60));
 
-      setPrediction(data.sign);
-      setConfidence(data.confidence);
-      setError("");
+      // ✅ XỬ LÝ CÁC TRƯỜNG HỢP ĐẶC BIỆT
+      if (data.sign === "unknown") {
+        setPrediction("unknown");
+        setConfidence(0);
+        setError("");
+      } else if (data.sign === "model_not_loaded") {
+        setError("Model not loaded");
+      } else {
+        setPrediction(data.sign);
+        setConfidence(data.confidence);
+        setError("");
+      }
     } catch (err: any) {
       log.error(`Translation failed: ${err.message}`, err);
       log.info("=".repeat(60));
@@ -78,27 +81,20 @@ const Translate: React.FC = () => {
     }
   };
 
-  // Nhận mỗi frame từ CameraView
   const handleFrameDetected = (sample: FrameSample) => {
     if (!isTranslatingRef.current) return;
-    // Đang trong cooldown thì bỏ qua frame
     if (cooldownRef.current) return;
 
-    // Chỉ nhận frame đủ chiều dài keypoints
     if (sample.keypoints.length === FEATURE_SIZE) {
       keypointsBufferRef.current.push([...sample.keypoints]);
 
       log.debug(`Frame added to buffer - current length: ${keypointsBufferRef.current.length}/${FRAMES_PER_VIDEO}`);
 
-      // Khi buffer đủ 30 frame, gửi translate và kích hoạt cooldown
       if (keypointsBufferRef.current.length === FRAMES_PER_VIDEO) {
-        const sequence = [...keypointsBufferRef.current]; // copy
+        const sequence = [...keypointsBufferRef.current];
         translateSequence(sequence);
-
-        // Reset buffer
         keypointsBufferRef.current = [];
 
-        // Bật cooldown, sau COOLDOWN_MS mới nhận frame tiếp
         cooldownRef.current = true;
         if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
         cooldownTimerRef.current = setTimeout(() => {
@@ -112,11 +108,15 @@ const Translate: React.FC = () => {
     }
   };
 
-  const startTranslation = () => {
-    // state thay đổi sẽ trigger useEffect xóa buffer & cooldown
+  const startTranslation = async () => {
     setPrediction("");
     setConfidence(0.0);
     setError("");
+    try {
+      await resetTranslate();
+    } catch (e) {
+      console.warn("Reset smoother failed", e);
+    }
     setIsTranslating(true);
   };
 
@@ -144,7 +144,6 @@ const Translate: React.FC = () => {
             </div>
           </div>
 
-          {/* Camera View */}
           <CameraView
             isRecording={isTranslating}
             mode="recognition"
@@ -169,11 +168,13 @@ const Translate: React.FC = () => {
             )}
           </div>
 
-          {/* Hiển thị kết quả ngay dưới camera */}
+          {/* ✅ HIỂN THỊ KẾT QUẢ ĐÃ ĐƯỢC CẢI TIẾN */}
           <div className="mt-6 p-4 rounded-xl bg-slate-800/50 border border-white/10">
             <div className="text-sm text-white/50 mb-1">Prediction</div>
             {error ? (
               <p className="text-red-400 text-sm">{error}</p>
+            ) : prediction === "unknown" ? (
+              <p className="text-yellow-400 italic">Đang phân tích – hãy giữ ký hiệu ổn định...</p>
             ) : prediction ? (
               <div>
                 <span className="text-3xl font-bold text-white">{prediction}</span>

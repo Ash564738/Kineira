@@ -1,18 +1,18 @@
+# api/services/scoring.py
 import logging
-from typing import Dict
-
 import numpy as np
-from scipy.spatial.distance import cdist
+from typing import Dict, Optional
+
+from ml.hand_utils import LEFT_HAND_INDICES, RIGHT_HAND_INDICES
 
 logger = logging.getLogger(__name__)
 
 def compute_cosine_similarity(seq1: np.ndarray, seq2: np.ndarray) -> float:
-    logger.debug(f"[SCORING] Computing cosine similarity - seq1 shape: {seq1.shape}, seq2 shape: {seq2.shape}")
+    """Tính cosine similarity giữa hai chuỗi, trả về giá trị [-1, 1]."""
     if seq1.shape != seq2.shape:
         min_len = min(len(seq1), len(seq2))
         seq1 = seq1[:min_len]
         seq2 = seq2[:min_len]
-        logger.debug(f"[SCORING] Sequences reshaped to same length: {min_len}")
 
     total_sim = 0.0
     count = 0
@@ -24,98 +24,65 @@ def compute_cosine_similarity(seq1: np.ndarray, seq2: np.ndarray) -> float:
         if norm1 > 1e-6 and norm2 > 1e-6:
             total_sim += float(np.dot(f1_flat, f2_flat) / (norm1 * norm2))
             count += 1
-    result = total_sim / count if count > 0 else 0.0
-    logger.debug(f"[SCORING] Cosine similarity computed: {result:.4f} from {count} frame pairs")
-    return result
+    return total_sim / count if count > 0 else 0.0
 
+def compute_hand_aware_score(
+    user_seq: np.ndarray,
+    reference_seq: np.ndarray,
+    predicted_sign: Optional[str] = None,
+    expected_sign: Optional[str] = None
+) -> Dict[str, float]:
+    """
+    Tính điểm tập trung vào bàn tay (80%) + tư thế (15%) + mặt (5%).
+    Nếu predicted_sign != expected_sign → phạt x0.3.
+    """
+    # Tách các phần
+    user_hand = np.concatenate([user_seq[:, LEFT_HAND_INDICES], user_seq[:, RIGHT_HAND_INDICES]], axis=1)
+    ref_hand = np.concatenate([reference_seq[:, LEFT_HAND_INDICES], reference_seq[:, RIGHT_HAND_INDICES]], axis=1)
 
-def compute_dtw_distance(seq1: np.ndarray, seq2: np.ndarray) -> float:
-    logger.debug(f"[SCORING] Computing DTW distance - seq1 length: {len(seq1)}, seq2 length: {len(seq2)}")
-    n, m = len(seq1), len(seq2)
-    s1 = seq1.reshape(n, -1)
-    s2 = seq2.reshape(m, -1)
-    dist_matrix = cdist(s1, s2, metric="euclidean")
-    logger.debug(f"[SCORING] Distance matrix shape: {dist_matrix.shape}")
+    user_pose = user_seq[:, 126:126+23*4]
+    ref_pose = reference_seq[:, 126:126+23*4]
 
-    dtw = np.full((n + 1, m + 1), np.inf)
-    dtw[0, 0] = 0
-    for i in range(1, n + 1):
-        for j in range(1, m + 1):
-            cost = dist_matrix[i - 1, j - 1]
-            dtw[i, j] = cost + min(dtw[i - 1, j], dtw[i, j - 1], dtw[i - 1, j - 1])
-    path_length = n + m
-    result = float(dtw[n, m] / path_length) if path_length > 0 else 1.0
-    logger.debug(f"[SCORING] DTW distance computed: {result:.4f}")
-    return result
+    user_face = user_seq[:, 126+23*4:]
+    ref_face = reference_seq[:, 126+23*4:]
 
+    hand_sim = compute_cosine_similarity(user_hand, ref_hand)
+    pose_sim = compute_cosine_similarity(user_pose, ref_pose)
+    face_sim = compute_cosine_similarity(user_face, ref_face)
 
-def compute_transformer_similarity(seq1: np.ndarray, seq2: np.ndarray) -> float:
-    logger.debug(f"[SCORING] Computing transformer similarity")
-    if len(seq1) < 2 or len(seq2) < 2:
-        logger.debug(f"[SCORING] Sequences too short for velocity computation, using cosine similarity")
-        return compute_cosine_similarity(seq1, seq2)
-    vel1 = seq1[1:] - seq1[:-1]
-    vel2 = seq2[1:] - seq2[:-1]
-    vel_sim = compute_cosine_similarity(vel1, vel2)
-    static_sim = compute_cosine_similarity(seq1, seq2)
-    result = static_sim * 0.6 + vel_sim * 0.4
-    logger.debug(f"[SCORING] Transformer similarity: static={static_sim:.4f}, velocity={vel_sim:.4f}, combined={result:.4f}")
-    return result
+    base_score = hand_sim * 0.80 + pose_sim * 0.15 + face_sim * 0.05
 
+    penalty = 1.0
+    if predicted_sign and expected_sign and predicted_sign != expected_sign:
+        penalty = 0.3
+        logger.warning(f"[SCORING] Wrong sign ({predicted_sign} vs {expected_sign}), penalty x{penalty}")
 
-def compute_overall_score(user_seq: np.ndarray, reference_seq: np.ndarray) -> Dict[str, float]:
-    logger.info("[SCORING] Starting overall score computation")
-    logger.debug(f"[SCORING] User sequence shape: {user_seq.shape}, Reference sequence shape: {reference_seq.shape}")
-    
-    logger.debug("[SCORING] Computing cosine similarity...")
-    cosine_sim = compute_cosine_similarity(user_seq, reference_seq)
-    
-    logger.debug("[SCORING] Computing DTW distance...")
-    dtw_dist = compute_dtw_distance(user_seq, reference_seq)
-    
-    logger.debug("[SCORING] Computing transformer similarity...")
-    transformer_sim = compute_transformer_similarity(user_seq, reference_seq)
-    
-    dtw_sim = 1.0 / (1.0 + dtw_dist)
-    logger.debug(f"[SCORING] All metrics computed - cosine: {cosine_sim:.4f}, dtw_sim: {dtw_sim:.4f}, transformer: {transformer_sim:.4f}")
-    
-    overall = cosine_sim * 0.4 + dtw_sim * 0.35 + transformer_sim * 0.25
-    score = max(0, min(100, overall * 100))
-    
-    accuracy = round(cosine_sim * 100, 2)
-    completeness = round(min(len(user_seq) / 30, 1.0) * 100, 2)
-    timing = round(transformer_sim * 100, 2)
-    
-    logger.info(f"[SCORING] Overall score computed: {score:.2f} (accuracy: {accuracy}%, completeness: {completeness}%, timing: {timing}%)")
-    
-    result = {
-        "score": round(score, 2),
-        "cosine_similarity": round(cosine_sim, 4),
-        "dtw_similarity": round(dtw_sim, 4),
-        "transformer_similarity": round(transformer_sim, 4),
-        "accuracy": accuracy,
-        "completeness": completeness,
-        "timing": timing,
+    final_score = max(0.0, min(100.0, base_score * penalty * 100))
+
+    return {
+        "score": round(final_score, 2),
+        "hand_score": round(hand_sim * 100, 2),
+        "pose_score": round(pose_sim * 100, 2),
+        "face_score": round(face_sim * 100, 2),
+        "penalty_applied": penalty < 1.0,
+        "predicted_sign": predicted_sign,
+        "expected_sign": expected_sign,
     }
-    logger.debug(f"[SCORING] Result dict: {result}")
-    return result
 
+def compute_overall_score(user_seq, reference_seq, **kwargs):
+    """Hàm bao bọc để tương thích với code cũ."""
+    return compute_hand_aware_score(user_seq, reference_seq, **kwargs)
 
 def generate_feedback(score: float) -> str:
-    logger.debug(f"[SCORING] Generating feedback for score: {score}")
     if score >= 90:
-        feedback = "Excellent! Perfect form. Keep up the great work!"
+        return "Excellent! Perfect form."
     elif score >= 80:
-        feedback = "Great job! Minor adjustments needed for perfection."
+        return "Great job! Minor adjustments needed."
     elif score >= 70:
-        feedback = "Good work! Focus on hand positions and movements."
+        return "Good work! Focus on hand positions and movements."
     elif score >= 60:
-        feedback = "Getting there! Try to match the reference more closely."
+        return "Getting there! Try to match the reference more closely."
     elif score >= 50:
-        feedback = "Keep practicing! Pay attention to finger positions."
-    elif score >= 40:
-        feedback = "Try again! Make sure your hand is visible and steady."
+        return "Keep practicing! Pay attention to finger positions."
     else:
-        feedback = "Keep trying! Ensure good lighting and camera angle."
-    logger.debug(f"[SCORING] Feedback generated: {feedback}")
-    return feedback
+        return "Keep trying! Ensure good lighting and correct hand shape."

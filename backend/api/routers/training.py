@@ -1,3 +1,4 @@
+# api/routers/training.py
 import asyncio
 import logging
 from threading import Thread
@@ -5,7 +6,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 
-from ml.training.train_holistic import HolisticTrainer
+from ml.train_holistic import HolisticTrainer
 
 from config import LSTM_EPOCHS
 

@@ -18,11 +18,14 @@ export async function translateSign(keypointsSequence: number[][]) {
   return parseJson<PredictionResult>(res);
 }
 
-export async function scoreGesture(userSequence: number[][], referenceSequence: number[][]) {
+export async function scoreGesture(userSequence: number[][], targetSign: string) {
   const res = await fetch(`${API_BASE_URL}/score`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ user_sequence: userSequence, reference_sequence: referenceSequence }),
+    body: JSON.stringify({
+      user_sequence: userSequence,
+      target_sign: targetSign,
+    }),
   });
   return parseJson<ScoringResult>(res);
 }
@@ -54,4 +57,12 @@ export async function saveAttempt(userId: number, payload: AttemptPayload) {
     body: JSON.stringify(payload),
   });
   return parseJson<Attempt>(res);
+}
+
+export async function resetTranslate() {
+  const res = await fetch(`${API_BASE_URL}/translate/reset`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  return parseJson<{ status: string }>(res);
 }

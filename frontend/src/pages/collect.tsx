@@ -9,6 +9,8 @@ import { FEATURE_SIZE, FrameSample, VIDEOS_PER_ACTION, FRAMES_PER_VIDEO } from '
 
 const STATUS_POLL_MS = 10000;
 const MAX_WAIT_MS_PER_FRAME = 5000;
+const VIDEOS_PER_HAND = 50;        // Số video cho mỗi tay
+const PAUSE_SECONDS = 5;           // Thời gian nghỉ giữa video (giây)
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -23,6 +25,10 @@ const Collect: React.FC = () => {
   const [trainingStatus, setTrainingStatus] = useState<any>(null);
   const [isTraining, setIsTraining] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+  const [pauseCountdown, setPauseCountdown] = useState<number>(0);
+  const [showContinueButton, setShowContinueButton] = useState(false);
+  const [failedVideos, setFailedVideos] = useState<number[]>([]);
 
   const collectingRef = useRef(collectingState);
   collectingRef.current = collectingState;
@@ -31,10 +37,9 @@ const Collect: React.FC = () => {
   const cameraReady = useRef(false);
   const stopRequested = useRef(false);
   const lockedRef = useRef(false);
-
   const currentActionRef = useRef('');
-
   const targetVideosRef = useRef(50);
+  const pauseResolveRef = useRef<(() => void) | null>(null);
 
   const loadAllStatus = async () => {
     try {
@@ -118,107 +123,195 @@ const Collect: React.FC = () => {
     }
     return null;
   };
+  const pauseWithUI = (message: string, seconds: number, manualContinue = true): Promise<void> => {
+    return new Promise((resolve) => {
+      setInfo(message);
+      setPauseCountdown(seconds);
+      setShowContinueButton(manualContinue);
 
+      if (seconds > 0) {
+        const interval = setInterval(() => {
+          setPauseCountdown((prev) => {
+            if (prev <= 1) {
+              clearInterval(interval);
+              if (!manualContinue) {
+                // tự động tiếp tục khi hết giờ
+                setInfo(null);
+                setShowContinueButton(false);
+                resolve();
+              }
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+        pauseResolveRef.current = () => {
+          clearInterval(interval);
+          setInfo(null);
+          setShowContinueButton(false);
+          resolve();
+        };
+      } else {
+        // Nếu seconds = 0, cần người dùng bấm nút mới tiếp tục
+        pauseResolveRef.current = () => {
+          setInfo(null);
+          setShowContinueButton(false);
+          resolve();
+        };
+      }
+    });
+  };
+  // Hàm chờ chuyển tay (đặc biệt)
+  const waitForHandSwitch = (): Promise<void> => {
+    return pauseWithUI(
+      'Hãy đổi tay thực hiện động tác. Nhấn "Đã sẵn sàng" để tiếp tục.',
+      0,  // không đếm ngược
+      true
+    );
+  };
+
+  // Hàm nghỉ giữa video
+  const pauseBetweenVideos = (videoNum: number): Promise<void> => {
+    return pauseWithUI(
+      `Nghỉ ngơi sau video ${videoNum}. Tiếp tục sau ${PAUSE_SECONDS}s...`,
+      PAUSE_SECONDS,
+      true
+    );
+  };
+
+  // Hàm bắt sự kiện click nút tiếp tục
+  const handleContinuePause = () => {
+    pauseResolveRef.current?.();
+  };
+
+  // Sửa captureOneVideo: không setError làm dừng toàn bộ, chỉ trả về false
   const captureOneVideo = async (action: string, videoNum: number): Promise<boolean> => {
     console.log(`[Collect] Starting video ${videoNum} for ${action}`);
     const framesBuffer: { frame_num: number; keypoints: number[] }[] = [];
 
-    // Thu thập đủ 30 frame
     for (let frameNum = 0; frameNum < FRAMES_PER_VIDEO; frameNum++) {
       if (stopRequested.current) return false;
 
       const sample = await waitForValidSample();
       if (!sample) {
-        setError(
-          `No valid keypoints for ${action} video ${videoNum}, frame ${frameNum}. Abort.`
-        );
+        // Không dừng toàn bộ, chỉ báo lỗi video này
+        setError(`Không có keypoints hợp lệ cho video ${videoNum}, frame ${frameNum}. Video này sẽ được thử lại sau.`);
         console.warn(`[Collect] frame ${frameNum} invalid or timeout`);
-        return false;
+        return false;  // thất bại video này
       }
 
-      // Log ngắn gọn để debug dữ liệu nhận
       console.log(`[Frame ${frameNum}] keypoints length=${sample.keypoints.length}, first10=`, sample.keypoints.slice(0, 10));
-
       framesBuffer.push({ frame_num: frameNum, keypoints: sample.keypoints });
-
-      setCollectingState((prev) => ({
-        ...prev,
-        videoNum,
-        frameNum: frameNum + 1,
-      }));
+      setCollectingState((prev) => ({ ...prev, videoNum, frameNum: frameNum + 1 }));
     }
 
-    // Gửi batch
     try {
-      console.log(`[Collect] Sending batch for action=${action}, video=${videoNum}, frames=${framesBuffer.length}`);
+      console.log(`[Collect] Sending batch for action=${action}, video=${videoNum}`);
       const resp = await collectionService.saveFrameBatch(action, videoNum, framesBuffer);
       console.log('[Batch save response]', resp);
       return true;
     } catch (err: any) {
       console.error('Batch save failed:', err);
-      setError(`Batch save failed: ${err.message}`);
-      stopRequested.current = true;
-      setCollectingState((prev) => ({ ...prev, isCollecting: false }));
+      setError(`Batch save failed for video ${videoNum}: ${err.message}`);
       return false;
     }
   };
 
+  // Retry các video lỗi
+  const retryFailedVideos = async (action: string, failed: number[]) => {
+    setError(null);
+    setInfo(`Còn ${failed.length} video bị lỗi. Chuẩn bị quay lại...`);
+    for (const videoNum of failed) {
+      if (stopRequested.current) break;
+      // Xóa video cũ nếu có và bắt đầu với overwrite
+      await collectionService.deleteVideo(action, videoNum);
+      const startOk = await collectionService.startCollection(action, videoNum, true); // overwrite
+      if (!startOk) {
+        setError(`Không thể bắt đầu lại video ${videoNum}. Dừng retry.`);
+        break;
+      }
+      // Cập nhật UI
+      setCollectingState(prev => ({ ...prev, isCollecting: true, videoNum, frameNum: 0 }));
+      const ok = await captureOneVideo(action, videoNum);
+      if (!ok) {
+        // Nếu vẫn lỗi, có thể cho vào danh sách failed mới hoặc dừng
+        setError(`Video ${videoNum} vẫn lỗi sau khi thử lại.`);
+        // Ở đây ta break, bạn có thể xử lý tinh tế hơn
+        break;
+      }
+      // Nghỉ giữa các lần retry
+      if (!stopRequested.current) await pauseWithUI(`Nghỉ ngơi sau video ${videoNum}.`, PAUSE_SECONDS, true);
+      await loadAllStatus();
+    }
+    setInfo(null);
+    setFailedVideos([]);
+  };
+
+  // Hàm chạy tất cả video (chính)
   const runAllVideos = async (action: string) => {
-      if (lockedRef.current) return;
-      lockedRef.current = true;
-      stopRequested.current = false;
-
+    if (lockedRef.current) return;
+    lockedRef.current = true;
+    stopRequested.current = false;
     try {
-        // Lấy số video tiếp theo từ server
-        const nextResp = await fetch(`http://localhost:8000/data-collection/next-video/${action}`);
-        if (!nextResp.ok) throw new Error('Failed to get next video');
-        const { next_video_num } = await nextResp.json();
-        let nextVideo = next_video_num;
+      const status = allStatus[action] || { target: VIDEOS_PER_ACTION };
+      const TOTAL_VIDEOS = status.target;
+      targetVideosRef.current = TOTAL_VIDEOS;
 
-        currentActionRef.current = action;
+      const nextResp = await fetch(`http://localhost:8000/data-collection/next-video/${action}`);
+      if (!nextResp.ok) throw new Error('Failed to get next video');
+      const { next_video_num } = await nextResp.json();
+      let nextVideo = next_video_num;
 
-        setCollectingState({
-            isCollecting: true,
-            action,
-            videoNum: nextVideo,
-            frameNum: 0,
-        });
+      currentActionRef.current = action;
+      setCollectingState({ isCollecting: true, action, videoNum: nextVideo, frameNum: 0 });
 
-        const status = allStatus[action] || { target: VIDEOS_PER_ACTION };
-        const TOTAL_VIDEOS = status.target;
+      const failed: number[] = [];
 
-        while (nextVideo <= TOTAL_VIDEOS && !stopRequested.current) {
-            // Bắt đầu video
-            const startResp = await collectionService.startCollection(action, nextVideo);
-            if (!startResp) {
-                // Nếu video đã tồn tại, tăng lên 1
-                nextVideo += 1;
-                continue;
-            }
-
-            const ok = await captureOneVideo(action, nextVideo);
-            if (!ok) break;
-
-            nextVideo += 1;
-            setCollectingState((prev) => ({
-                ...prev,
-                videoNum: nextVideo,
-                frameNum: 0,
-            }));
-
-            await loadAllStatus();
-
-            if (nextVideo > TOTAL_VIDEOS) {
-                console.log(`[Collect] All ${TOTAL_VIDEOS} videos done for ${action}`);
-                break;
-            }
+      while (nextVideo <= TOTAL_VIDEOS && !stopRequested.current) {
+        // Kiểm tra đổi tay nếu áp dụng (action yêu cầu cả hai tay)
+        // Bạn có thể kiểm tra action có cần đổi tay không (ví dụ nếu target = 100)
+        if (TOTAL_VIDEOS >= VIDEOS_PER_HAND * 2 && nextVideo === VIDEOS_PER_HAND + 1) {
+          await waitForHandSwitch();
         }
+
+        const startOk = await collectionService.startCollection(action, nextVideo, false);
+        if (!startOk) {
+          // Nếu video tồn tại và không overwrite, bỏ qua (có thể đã hoàn thành)
+          nextVideo++;
+          continue;
+        }
+
+        const ok = await captureOneVideo(action, nextVideo);
+        if (!ok) {
+          failed.push(nextVideo);
+        }
+
+        // Nghỉ giữa video (nếu chưa dừng)
+        if (!stopRequested.current && nextVideo < TOTAL_VIDEOS) {
+          await pauseBetweenVideos(nextVideo);
+        }
+
+        nextVideo++;
+        setCollectingState(prev => ({ ...prev, videoNum: nextVideo, frameNum: 0 }));
+        await loadAllStatus();
+      }
+
+      // Sau khi vòng lặp kết thúc
+      if (failed.length > 0 && !stopRequested.current) {
+        setFailedVideos(failed);
+        await retryFailedVideos(action, failed);
+      }
+
+      if (nextVideo > TOTAL_VIDEOS) {
+        console.log(`[Collect] All ${TOTAL_VIDEOS} videos done for ${action}`);
+      }
     } catch (err) {
-        console.error('runAllVideos error:', err);
+      console.error('runAllVideos error:', err);
+      setError('Unexpected error in collection');
     } finally {
-        lockedRef.current = false;
-        setCollectingState((prev) => ({ ...prev, isCollecting: false }));
-        loadAllStatus();
+      lockedRef.current = false;
+      setCollectingState(prev => ({ ...prev, isCollecting: false }));
+      loadAllStatus();
     }
   };
 
@@ -230,36 +323,28 @@ const Collect: React.FC = () => {
   }, []);
 
   const handleStartCollection = async (action: string) => {
-      setError(null);
+    setError(null);
+    const nextResp = await fetch(`http://localhost:8000/data-collection/next-video/${action}`);
+    if (!nextResp.ok) {
+      setError('Failed to get next video number');
+      return;
+    }
+    const { next_video_num } = await nextResp.json();
+    const status = allStatus[action] || { target: VIDEOS_PER_ACTION };
+    const TOTAL_VIDEOS = status.target;
+    targetVideosRef.current = TOTAL_VIDEOS;
 
-      // Lấy số video tiếp theo
-      const nextResp = await fetch(`http://localhost:8000/data-collection/next-video/${action}`);
-      if (!nextResp.ok) {
-          setError('Failed to get next video number');
-          return;
-      }
-      const { next_video_num } = await nextResp.json();
+    if (status.videos_collected >= TOTAL_VIDEOS) {
+      setError(`"${action}" already complete.`);
+      return;
+    }
 
-      const status = allStatus[action] || { target: VIDEOS_PER_ACTION };
-      const TOTAL_VIDEOS = status.target;
-      targetVideosRef.current = TOTAL_VIDEOS;
+    currentActionRef.current = action;
+    setCollectingState({ isCollecting: true, action, videoNum: next_video_num, frameNum: 0 });
 
-      if (status.videos_collected >= TOTAL_VIDEOS) {
-          setError(`"${action}" already complete.`);
-          return;
-      }
-
-      currentActionRef.current = action;
-      setCollectingState({
-          isCollecting: true,
-          action,
-          videoNum: next_video_num,
-          frameNum: 0,
-      });
-
-      if (cameraReady.current && !lockedRef.current) {
-          runAllVideos(action);
-      }
+    if (cameraReady.current && !lockedRef.current) {
+      runAllVideos(action);
+    }
   };
 
   const handleCancelCollection = () => {
@@ -306,6 +391,22 @@ const Collect: React.FC = () => {
           </div>
         )}
 
+        {/* Hiển thị thông báo tạm dừng/đổi tay */}
+        {info && (
+          <div className="mb-4 p-4 rounded-lg bg-blue-500/20 border border-blue-500/50 text-blue-200 flex flex-col items-center">
+            <p className="mb-3">{info}</p>
+            {pauseCountdown > 0 && <p className="text-lg font-bold mb-2">{pauseCountdown}s</p>}
+            {showContinueButton && (
+              <button
+                onClick={handleContinuePause}
+                className="px-4 py-2 bg-white text-black rounded-lg font-semibold hover:bg-white/90"
+              >
+                Tiếp tục ngay
+              </button>
+            )}
+          </div>
+        )}
+
         {collectingState.isCollecting && (
           <div className="mb-8 rounded-2xl border border-white/10 bg-slate-900/40 p-5">
             <div className="flex items-center justify-between mb-4">
@@ -343,6 +444,7 @@ const Collect: React.FC = () => {
           </div>
         )}
 
+        {/* Danh sách actions */}
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
           {Object.entries(allStatus).map(([action, status]: [string, any]) => {
             const complete = status.videos_collected >= status.target;

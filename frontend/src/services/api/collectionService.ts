@@ -33,15 +33,14 @@ class CollectionService {
     return res.json();
   }
 
-  async startCollection(action: string, videoNum: number) {
-    const res = await fetch(`${API_BASE}/data-collection/start/${action}/${videoNum}`, {
-      method: 'POST',
-    });
+  async startCollection(action: string, videoNum: number, overwrite: boolean = false) {
+    const url = new URL(`${API_BASE}/data-collection/start/${action}/${videoNum}`);
+    if (overwrite) url.searchParams.set('overwrite', 'true');
+    const res = await fetch(url.toString(), { method: 'POST' });
     if (!res.ok) throw new Error(`Failed to start collection: ${res.status}`);
     return res.json();
   }
 
-  // Hàm gửi batch frame
   async saveFrameBatch(
     action: string,
     videoNum: number,
@@ -55,12 +54,19 @@ class CollectionService {
         body: JSON.stringify({ frames }),
       }
     );
-
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       throw new Error(`Batch save failed: ${res.status} ${text}`);
     }
+    return res.json();
+  }
 
+  // Thêm phương thức xoá video
+  async deleteVideo(action: string, videoNum: number) {
+    const res = await fetch(`${API_BASE}/data-collection/video/${action}/${videoNum}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) throw new Error(`Failed to delete video: ${res.status}`);
     return res.json();
   }
 }
