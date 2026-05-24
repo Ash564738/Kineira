@@ -15,7 +15,7 @@ class User(Base):
 
     id = Column(Integer, primary_key=True)
     username = Column(String(50), unique=True, nullable=False)
-    email = Column(String(100), unique=True, nullable=False)
+    hashed_password = Column(String(128), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     attempts = relationship("Attempt", back_populates="user")

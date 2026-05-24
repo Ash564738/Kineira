@@ -16,8 +16,8 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
-def create_user(db: Session, username: str, email: str) -> User:
-    user = User(username=username, email=email)
+def create_user(db: Session, username: str, hashed_password: str) -> User:
+    user = User(username=username, hashed_password=hashed_password)
     db.add(user)
     db.commit()
     db.refresh(user)

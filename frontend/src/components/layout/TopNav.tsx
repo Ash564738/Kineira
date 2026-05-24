@@ -1,3 +1,5 @@
+// src/components/layout/TopNav.tsx
+import { useAuth } from "@/contexts/AuthContext";
 import Link from "next/link";
 
 interface TopNavProps {
@@ -5,6 +7,9 @@ interface TopNavProps {
 }
 
 export default function TopNav({ active }: TopNavProps) {
+  // Hook phải được gọi trong thân component
+  const { user, logout } = useAuth();
+
   return (
     <header className="border-b border-white/10 bg-slate-900/80 backdrop-blur-xl">
       <div className="max-w-7xl mx-auto px-6 py-5 flex justify-between items-center">
@@ -50,6 +55,15 @@ export default function TopNav({ active }: TopNavProps) {
           >
             Collect Data
           </Link>
+          {user ? (
+            <button onClick={logout} className="hover:text-white transition-colors">
+              Logout
+            </button>
+          ) : (
+            <Link href="/login" className="hover:text-white transition-colors">
+              Login
+            </Link>
+          )}
         </nav>
       </div>
     </header>

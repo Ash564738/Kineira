@@ -1,5 +1,17 @@
 import { Attempt, AttemptPayload, Lesson, PredictionResult, Progress, ScoringResult } from "../../types/api";
 import { API_BASE_URL } from "./config";
+const getToken = () => localStorage.getItem('token');
+
+export async function fetchWithToken(url: string, options: RequestInit = {}) {
+  const token = getToken();
+  if (token) {
+    options.headers = {
+      ...options.headers,
+      Authorization: `Bearer ${token}`,
+    };
+  }
+  return fetch(url, options);
+}
 
 async function parseJson<T>(res: Response): Promise<T> {
   if (!res.ok) {

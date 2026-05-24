@@ -3,6 +3,8 @@ import Link from 'next/link';
 import TopNav from '../components/layout/TopNav';
 import { fetchUserAttempts, fetchUserProgress } from '../services/api/client';
 import { Attempt, Progress } from '../types/api';
+import { useAuth } from '@/contexts/AuthContext';
+import { useRouter } from 'next/router';
 
 const ProgressPage: React.FC = () => {
   console.log('[ProgressPage] component render started');
@@ -10,6 +12,12 @@ const ProgressPage: React.FC = () => {
   const [progress, setProgress] = useState<Progress[]>([]);
   const [attempts, setAttempts] = useState<Attempt[]>([]);
   const [loading, setLoading] = useState(true);
+  
+  const { user, isLoading } = useAuth();
+  const router = useRouter();
+  useEffect(() => {
+    if (!isLoading && !user) router.push('/login');
+  }, [user, isLoading]);
 
   console.log('[ProgressPage] current state snapshot:', {
     progressLength: progress.length,
