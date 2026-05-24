@@ -6,5 +6,4 @@ dist/
 __pycache__/
 *.pyc
 backend/venv/
-backend/datasets/MP_Data/*
 backend/datasets/WLASL/*
