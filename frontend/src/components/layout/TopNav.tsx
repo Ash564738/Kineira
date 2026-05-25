@@ -60,7 +60,7 @@ export default function TopNav({ active }: TopNavProps) {
               Logout
             </button>
           ) : (
-            <Link href="/login" className="hover:text-white transition-colors">
+            <Link href="/auth/login" className="hover:text-white transition-colors">
               Login
             </Link>
           )}

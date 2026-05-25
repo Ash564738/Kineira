@@ -1,5 +1,5 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
-
+// src/services/api/collectionService.ts
+import { API_BASE_URL } from "./config"; // Thêm import này nếu cần
 export type AllStatus = Record<
   string,
   {
@@ -28,13 +28,13 @@ export type BatchSaveResponse = {
 
 class CollectionService {
   async getAllStatus(): Promise<AllStatus> {
-    const res = await fetch(`${API_BASE}/data-collection/status`);
+    const res = await fetch(`${API_BASE_URL}/data-collection/status`);
     if (!res.ok) throw new Error(`Failed to load status: ${res.status}`);
     return res.json();
   }
 
   async startCollection(action: string, videoNum: number, overwrite: boolean = false) {
-    const url = new URL(`${API_BASE}/data-collection/start/${action}/${videoNum}`);
+    const url = new URL(`${API_BASE_URL}/data-collection/start/${action}/${videoNum}`);
     if (overwrite) url.searchParams.set('overwrite', 'true');
     const res = await fetch(url.toString(), { method: 'POST' });
     if (!res.ok) throw new Error(`Failed to start collection: ${res.status}`);
@@ -47,7 +47,7 @@ class CollectionService {
     frames: FrameItem[]
   ): Promise<BatchSaveResponse> {
     const res = await fetch(
-      `${API_BASE}/data-collection/frame-vector/${action}/${videoNum}`,
+      `${API_BASE_URL}/data-collection/frame-vector/${action}/${videoNum}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -63,7 +63,7 @@ class CollectionService {
 
   // Thêm phương thức xoá video
   async deleteVideo(action: string, videoNum: number) {
-    const res = await fetch(`${API_BASE}/data-collection/video/${action}/${videoNum}`, {
+    const res = await fetch(`${API_BASE_URL}/data-collection/video/${action}/${videoNum}`, {
       method: 'DELETE',
     });
     if (!res.ok) throw new Error(`Failed to delete video: ${res.status}`);

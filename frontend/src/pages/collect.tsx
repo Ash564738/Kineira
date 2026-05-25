@@ -1,3 +1,4 @@
+// src/pages/collect.tsx
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -6,15 +7,21 @@ import collectionService, { AllStatus } from '../services/api/collectionService'
 import trainingService from '../services/api/trainingService';
 import TopNav from '../components/layout/TopNav';
 import { FEATURE_SIZE, FrameSample, VIDEOS_PER_ACTION, FRAMES_PER_VIDEO } from '../types/landmarks';
+import { useAuth } from '../contexts/AuthContext';
+import { useRouter } from 'next/router';
 
 const STATUS_POLL_MS = 10000;
 const MAX_WAIT_MS_PER_FRAME = 5000;
-const VIDEOS_PER_HAND = 50;        // Số video cho mỗi tay
-const PAUSE_SECONDS = 5;           // Thời gian nghỉ giữa video (giây)
+const VIDEOS_PER_HAND = 50;
+const PAUSE_SECONDS = 5;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const Collect: React.FC = () => {
+  // ========== TẤT CẢ HOOKS PHẢI ĐƯỢC GỌI TRƯỚC RETURN ==========
+  const { user, isLoading } = useAuth();
+  const router = useRouter();
+
   const [allStatus, setAllStatus] = useState<AllStatus>({});
   const [collectingState, setCollectingState] = useState({
     isCollecting: false,
@@ -41,14 +48,11 @@ const Collect: React.FC = () => {
   const targetVideosRef = useRef(50);
   const pauseResolveRef = useRef<(() => void) | null>(null);
 
-  const loadAllStatus = async () => {
-    try {
-      const status = await collectionService.getAllStatus();
-      setAllStatus(status);
-    } catch (err) {
-      console.error('Status load error:', err);
+  useEffect(() => {
+    if (!isLoading && !user) {
+      router.push('/auth/login');
     }
-  };
+  }, [user, isLoading]);
 
   useEffect(() => {
     loadAllStatus();
@@ -70,6 +74,22 @@ const Collect: React.FC = () => {
     return () => clearInterval(poll);
   }, [isTraining]);
 
+  if (isLoading || !user) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+        <div className="text-white">Please log in to access this page.</div>
+      </div>
+    );
+  }
+
+  async function loadAllStatus() {
+    try {
+      const status = await collectionService.getAllStatus();
+      setAllStatus(status);
+    } catch (err) {
+      console.error('Status load error:', err);
+    }
+  };
 
   const summarizeKeypoints = (keypoints: number[]) => {
     const len = keypoints?.length ?? 0;

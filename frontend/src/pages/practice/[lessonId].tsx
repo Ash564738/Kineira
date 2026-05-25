@@ -1,4 +1,4 @@
-// pages/[lessonId].tsx
+// pages/practice/[lessonId].tsx
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
@@ -7,6 +7,7 @@ import { FrameLandmarks, N_POSE, N_FACE, N_HAND, FRAMES_PER_VIDEO, FEATURE_SIZE,
 import TopNav from '../../components/layout/TopNav';
 import { Lesson, ScoringResult } from '../../types/api';
 import { fetchLesson as fetchLessonApi, saveAttempt, scoreGesture } from '../../services/api/client';
+import { useAuth } from '../../contexts/AuthContext';
 
 const PracticeLesson: React.FC = () => {
   const router = useRouter();
@@ -17,6 +18,13 @@ const PracticeLesson: React.FC = () => {
   const [evaluation, setEvaluation] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const { user, isLoading } = useAuth();
+
+  useEffect(() => {
+  if (!isLoading && !user) {
+    router.push('/auth/login');
+  }
+  }, [user, isLoading]);
 
   // Load lesson
   useEffect(() => {
@@ -45,11 +53,11 @@ const PracticeLesson: React.FC = () => {
   }, [keypointBuffer, isRecording]);
 
   const evaluateGesture = async (sequence: number[][]) => {
-    if (!lesson) return;
+    if (!lesson || !user) return;
     try {
       const result = await scoreGesture(sequence, lesson.reference_sign?.toUpperCase() || 'A');
       setEvaluation(result);
-      await saveAttempt(1, {
+      await saveAttempt(user.id, {
         lesson_id: lesson.id,
         sign_id: lesson.sign_id,
         score: result.score,
@@ -70,7 +78,11 @@ const PracticeLesson: React.FC = () => {
       setKeypointBuffer([]);
     }
   };
-
+  if (isLoading || !user) {
+    return <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+      <div className="text-white">Checking authentication...</div>
+    </div>;
+  }
   if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center"><p>Loading...</p></div>;
   if (!lesson) return <div className="min-h-screen bg-slate-950 flex items-center justify-center"><p>Lesson not found</p></div>;
 

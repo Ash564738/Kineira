@@ -1,7 +1,7 @@
 // src/contexts/AuthContext.tsx
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
-import { API_BASE_URL } from '../services/api/config'; // thêm import này
+import { API_BASE_URL } from '../services/api/config';
 
 interface User {
   id: number;
@@ -95,9 +95,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem('token');
     setToken(null);
     setUser(null);
-    router.push('/login');
+    router.push('/auth/login');
   };
-
+  
   return (
     <AuthContext.Provider value={{ user, token, login, register, logout, isLoading }}>
       {children}

@@ -6,4 +6,4 @@ dist/
 __pycache__/
 *.pyc
 backend/venv/
-backend/datasets/WLASL/*
+backend/datasets/WLASL/start_kit/raw_videos/*

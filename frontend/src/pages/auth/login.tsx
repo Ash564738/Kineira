@@ -1,5 +1,6 @@
+// src/pages/auth/login.tsx
 import { useState } from 'react';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../../contexts/AuthContext';
 import Link from 'next/link';
 
 export default function Login() {
@@ -42,7 +43,7 @@ export default function Login() {
           Login
         </button>
         <p className="text-gray-400 mt-4 text-center">
-          Don't have an account? <Link href="/register" className="text-white underline">Register</Link>
+          Don't have an account? <Link href="/auth/register" className="text-white underline">Register</Link>
         </p>
       </form>
     </div>

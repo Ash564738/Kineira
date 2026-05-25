@@ -1,37 +1,63 @@
 # ml/hand_utils.py
-"""
-Hand-specific utilities for landmark detection, normalization, and processing.
-"""
 
 import logging
 import numpy as np
-from typing import Tuple, Dict, Optional
+from typing import Tuple, Dict, Any
 
-from config import N_HAND  # đảm bảo config.py có N_HAND = 21
+from config import (
+    N_HAND,
+    LEFT_HAND_START,
+    LEFT_HAND_END,
+    RIGHT_HAND_START,
+    RIGHT_HAND_END,
+    FEATURE_SIZE,
+    LEFT_HAND_INDICES,
+    RIGHT_HAND_INDICES,
+    BODY_INDICES,
+)
 
 logger = logging.getLogger(__name__)
 
-# ========== Tự tính thay vì import từ train_holistic ==========
-LEFT_HAND_START = 0
-LEFT_HAND_END = N_HAND * 3                # 63
-RIGHT_HAND_START = LEFT_HAND_END          # 63
-RIGHT_HAND_END = RIGHT_HAND_START + N_HAND * 3  # 126
 
-# Hand indices trong vector 1D (dùng cho slicing)
-LEFT_HAND_INDICES = np.arange(LEFT_HAND_START, LEFT_HAND_END)    # 0..62
-RIGHT_HAND_INDICES = np.arange(RIGHT_HAND_START, RIGHT_HAND_END) # 63..125
-BODY_INDICES = np.arange(RIGHT_HAND_END, 329)   # 126..328 (Pose + Face)
+def _has_hand_signal(hand_slice: np.ndarray) -> bool:
+    if hand_slice.size == 0:
+        return False
 
-# ========== Các hàm giữ nguyên ==========
+    flat = hand_slice.reshape(hand_slice.shape[0], -1)
+
+    # Tỷ lệ phần tử khác 0
+    active_values = np.count_nonzero(np.abs(flat) > 1e-6)
+    active_threshold = max(20, int(flat.size * 0.01))
+    if active_values > active_threshold:
+        return True
+
+    # Nếu sequence có nhiều frame thì dùng motion làm tín hiệu phụ
+    if flat.shape[0] >= 2:
+        motion = float(np.sum(np.abs(np.diff(flat, axis=0))))
+        motion_threshold = max(2.0, float(flat.size) * 0.002)
+        if motion > motion_threshold:
+            return True
+
+    return False
+
+
 def detect_active_hands(sequence: np.ndarray) -> Tuple[bool, bool]:
-    left_data = sequence[:, LEFT_HAND_START:LEFT_HAND_END]
-    right_data = sequence[:, RIGHT_HAND_START:RIGHT_HAND_END]
-    left_nonzero = np.count_nonzero(left_data)
-    right_nonzero = np.count_nonzero(right_data)
-    threshold = 100
-    has_left = left_nonzero > threshold and np.var(left_data) > 1e-4
-    has_right = right_nonzero > threshold and np.var(right_data) > 1e-4
+    if sequence.ndim != 2 or sequence.shape[1] < max(RIGHT_HAND_END, LEFT_HAND_END):
+        raise ValueError(f"Invalid sequence shape for hand detection: {sequence.shape}")
+
+    left_slice = sequence[:, LEFT_HAND_START:LEFT_HAND_END]
+    right_slice = sequence[:, RIGHT_HAND_START:RIGHT_HAND_END]
+
+    has_left = _has_hand_signal(left_slice)
+    has_right = _has_hand_signal(right_slice)
+
+    logger.debug(
+        f"[HAND_DETECT] left={has_left}, right={has_right}, "
+        f"left_nonzero={np.count_nonzero(np.abs(left_slice) > 1e-6)}, "
+        f"right_nonzero={np.count_nonzero(np.abs(right_slice) > 1e-6)}"
+    )
     return has_left, has_right
+
 
 def detect_hand_activity_per_frame(sequence: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     left_data = sequence[:, LEFT_HAND_INDICES]
@@ -40,15 +66,30 @@ def detect_hand_activity_per_frame(sequence: np.ndarray) -> Tuple[np.ndarray, np
     right_active = np.any(np.abs(right_data) > 1e-6, axis=1)
     return left_active, right_active
 
+
 def mirror_hand_landmarks(hand_data: np.ndarray, is_left_to_right: bool = True) -> np.ndarray:
+    """
+    Mirror theo trục X. is_left_to_right chỉ mang ý nghĩa ngữ nghĩa,
+    thao tác thực tế là đảo trục X của toàn bộ hand landmarks.
+    """
     mirrored = hand_data.copy()
-    original_shape = mirrored.shape
-    if len(original_shape) == 2:
-        mirrored = mirrored.reshape(-1, 21, 3)
-    elif len(original_shape) == 3:
-        mirrored = mirrored.reshape(original_shape[0], -1, 21, 3)
-    mirrored[..., 0] *= -1
-    return mirrored.reshape(original_shape)
+
+    if mirrored.ndim == 2:
+        if mirrored.shape[1] % 3 != 0:
+            raise ValueError(f"Invalid hand_data shape: {mirrored.shape}")
+        original_shape = mirrored.shape
+        mirrored = mirrored.reshape(-1, N_HAND, 3)
+        mirrored[..., 0] *= -1.0
+        return mirrored.reshape(original_shape)
+
+    if mirrored.ndim == 3:
+        if mirrored.shape[-1] != 3:
+            raise ValueError(f"Invalid hand_data shape: {mirrored.shape}")
+        mirrored[..., 0] *= -1.0
+        return mirrored
+
+    raise ValueError(f"Unsupported hand_data ndim: {mirrored.ndim}")
+
 
 def extract_hand_features(sequence: np.ndarray, hand_type: str = "left") -> np.ndarray:
     if hand_type == "left":
@@ -64,54 +105,60 @@ def extract_hand_features(sequence: np.ndarray, hand_type: str = "left") -> np.n
         elif has_right:
             return sequence[:, RIGHT_HAND_INDICES]
         else:
-            return np.zeros((sequence.shape[0], 63))
+            return np.zeros((sequence.shape[0], N_HAND * 3), dtype=sequence.dtype)
     else:
         raise ValueError(f"Unknown hand_type: {hand_type}")
 
+
 def extract_body_features(sequence: np.ndarray) -> np.ndarray:
     return sequence[:, BODY_INDICES]
+
 
 def normalize_hand_representation(
     user_seq: np.ndarray,
     reference_seq: np.ndarray
 ) -> Tuple[np.ndarray, np.ndarray, str]:
+    """
+    Chuẩn hóa hand handedness giữa user và reference.
+    Nếu user/ref lệch trái-phải thì mirror user để khớp reference.
+    """
     user_left, user_right = detect_active_hands(user_seq)
     ref_left, ref_right = detect_active_hands(reference_seq)
 
     logger.debug(f"[HAND_NORM] User hands: left={user_left}, right={user_right}")
     logger.debug(f"[HAND_NORM] Reference hands: left={ref_left}, right={ref_right}")
 
-    # Case 1: Perfect match
-    if (user_left and ref_left) or (user_right and ref_right):
-        if user_left and ref_left:
-            logger.debug("[HAND_NORM] Both use left hand")
-            return user_seq, reference_seq, "same"
-        else:
-            logger.debug("[HAND_NORM] Both use right hand")
-            return user_seq, reference_seq, "same"
+    # Cùng side
+    if user_left and ref_left:
+        return user_seq, reference_seq, "same_left"
+    if user_right and ref_right:
+        return user_seq, reference_seq, "same_right"
 
-    # Case 2: Hands don't match - need normalization
-    if (user_left and ref_right):
-        logger.debug("[HAND_NORM] User left, reference right → mirroring user")
+    # User trái, ref phải -> mirror user sang phải
+    if user_left and ref_right:
         user_normalized = user_seq.copy()
         left_hand = user_normalized[:, LEFT_HAND_INDICES]
         mirrored_left = mirror_hand_landmarks(left_hand, is_left_to_right=True)
         user_normalized[:, RIGHT_HAND_INDICES] = mirrored_left
         user_normalized[:, LEFT_HAND_INDICES] = 0
-        return user_normalized, reference_seq, "mirror_user"
+        return user_normalized, reference_seq, "mirror_user_left_to_right"
 
-    elif (user_right and ref_left):
-        logger.debug("[HAND_NORM] User right, reference left → mirroring user")
+    # User phải, ref trái -> mirror user sang trái
+    if user_right and ref_left:
         user_normalized = user_seq.copy()
         right_hand = user_normalized[:, RIGHT_HAND_INDICES]
         mirrored_right = mirror_hand_landmarks(right_hand, is_left_to_right=False)
         user_normalized[:, LEFT_HAND_INDICES] = mirrored_right
         user_normalized[:, RIGHT_HAND_INDICES] = 0
-        return user_normalized, reference_seq, "mirror_user"
+        return user_normalized, reference_seq, "mirror_user_right_to_left"
 
-    elif (user_left and user_right) and (ref_left == ref_right):
-        logger.debug("[HAND_NORM] User two-hand, reference one-hand → no normalization")
-        return user_seq, reference_seq, "mismatch"
+    # Hai tay so với hai tay, hoặc cấu hình không rõ ràng
+    if (user_left and user_right) and (ref_left and ref_right):
+        return user_seq, reference_seq, "both"
+    if (user_left and user_right) and (ref_left or ref_right):
+        return user_seq, reference_seq, "mismatch_user_both_ref_one"
+    if (ref_left and ref_right) and (user_left or user_right):
+        return user_seq, reference_seq, "mismatch_user_one_ref_both"
 
     logger.warning("[HAND_NORM] Unexpected hand configuration")
     return user_seq, reference_seq, "unknown"
@@ -127,11 +174,12 @@ def get_hand_weight_masks(sequence_shape: int = 329) -> Tuple[np.ndarray, np.nda
     return hand_mask, body_mask, hand_weights
 
 
-def analyze_hand_configuration(sequence: np.ndarray) -> Dict[str, any]:
+def analyze_hand_configuration(sequence: np.ndarray) -> Dict[str, Any]:
     has_left, has_right = detect_active_hands(sequence)
     left_active, right_active = detect_hand_activity_per_frame(sequence)
-    left_frames = np.sum(left_active)
-    right_frames = np.sum(right_active)
+
+    left_frames = int(np.sum(left_active))
+    right_frames = int(np.sum(right_active))
 
     if has_left and has_right:
         hand_type = "both"
@@ -155,7 +203,7 @@ def analyze_hand_configuration(sequence: np.ndarray) -> Dict[str, any]:
         "has_left": has_left,
         "has_right": has_right,
         "hand_type": hand_type,
-        "left_active_frames": int(left_frames),
-        "right_active_frames": int(right_frames),
+        "left_active_frames": left_frames,
+        "right_active_frames": right_frames,
         "dominant_hand": dominant,
     }

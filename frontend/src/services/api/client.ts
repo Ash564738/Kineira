@@ -1,3 +1,4 @@
+// src/services/api/client.ts
 import { Attempt, AttemptPayload, Lesson, PredictionResult, Progress, ScoringResult } from "../../types/api";
 import { API_BASE_URL } from "./config";
 const getToken = () => localStorage.getItem('token');

@@ -1,3 +1,4 @@
+// src/types/api.ts
 export interface PredictionResult {
   sign: string;
   confidence: number;
@@ -18,11 +19,11 @@ export interface ScoringResult {
   confidence?: number;
   hand_similarity?: number;
   finger_details?: Record<string, FingerDetail>;
-  overall_score?: number; // nếu bạn dùng tên này trong JSX
+  overall_score?: number;
 }
 
 export interface FingerDetail {
-  similarity: number;          // combined
+  similarity: number;
   cosine_similarity: number;
   magnitude_similarity: number;
   suggestion: string;

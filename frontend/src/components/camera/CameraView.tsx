@@ -1,3 +1,4 @@
+// src/components/camera/CameraView.tsx
 import React, { useEffect, useRef, useState } from 'react';
 import { LandmarkTracker } from '../../lib/landmarks/LandmarkTracker';
 import { FrameSample } from '../../types/landmarks';

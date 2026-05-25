@@ -1,3 +1,4 @@
+// src/pages/index.tsx
 import React, { useState, useRef, useEffect } from "react";
 import CameraView from "../components/camera/CameraView";
 import TopNav from "../components/layout/TopNav";

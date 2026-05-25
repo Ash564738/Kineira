@@ -1,3 +1,4 @@
+// src/pages/progress.tsx
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import TopNav from '../components/layout/TopNav';
@@ -15,8 +16,9 @@ const ProgressPage: React.FC = () => {
   
   const { user, isLoading } = useAuth();
   const router = useRouter();
+
   useEffect(() => {
-    if (!isLoading && !user) router.push('/login');
+    if (!isLoading && !user) router.push('/auth/login');
   }, [user, isLoading]);
 
   console.log('[ProgressPage] current state snapshot:', {
@@ -26,19 +28,15 @@ const ProgressPage: React.FC = () => {
   });
 
   useEffect(() => {
-    console.log('[ProgressPage] useEffect mount triggered, starting fetchProgress and fetchAttempts');
-    try {
-      fetchProgress();
-      fetchAttempts();
-    } catch (error) {
-      console.error('[ProgressPage] unexpected error inside mount effect:', error);
-    }
-  }, []);
+    if (!user) return;
+    fetchProgress();
+    fetchAttempts();
+  }, [user]);
 
   const fetchProgress = async () => {
     console.log('[ProgressPage] fetchProgress started');
     try {
-      const data = await fetchUserProgress(1);
+      const data = await fetchUserProgress(user?.id || 0);
       console.log('[ProgressPage] fetchProgress raw response data:', data);
 
       const normalizedData = data.map((item) => ({
@@ -56,7 +54,7 @@ const ProgressPage: React.FC = () => {
   const fetchAttempts = async () => {
     console.log('[ProgressPage] fetchAttempts started');
     try {
-      const data = await fetchUserAttempts(1);
+      const data = await fetchUserAttempts(user?.id || 0);
       console.log('[ProgressPage] fetchAttempts raw response data:', data);
       setAttempts(data);
     } catch (error) {

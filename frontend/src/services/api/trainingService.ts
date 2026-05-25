@@ -1,6 +1,6 @@
+// src/services/api/trainingService.ts
 import axios from 'axios';
-
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+import { API_BASE_URL } from "./config";
 
 export interface TrainingStatus {
   status: 'idle' | 'queued' | 'training' | 'completed' | 'failed' | 'cancelled';
@@ -26,27 +26,27 @@ export interface TrainingMetrics {
 
 class TrainingService {
   async startTraining() {
-    const response = await axios.post(`${API_URL}/training/start`);
+    const response = await axios.post(`${API_BASE_URL}/training/start`);
     return response.data;
   }
 
   async getStatus(): Promise<TrainingStatus> {
-    const response = await axios.get(`${API_URL}/training/status`);
+    const response = await axios.get(`${API_BASE_URL}/training/status`);
     return response.data;
   }
 
   async cancelTraining() {
-    const response = await axios.post(`${API_URL}/training/cancel`);
+    const response = await axios.post(`${API_BASE_URL}/training/cancel`);
     return response.data;
   }
 
   async validateData() {
-    const response = await axios.post(`${API_URL}/training/validate`);
+    const response = await axios.post(`${API_BASE_URL}/training/validate`);
     return response.data;
   }
 
   async getMetrics(): Promise<TrainingMetrics> {
-    const response = await axios.get(`${API_URL}/training/metrics`);
+    const response = await axios.get(`${API_BASE_URL}/training/metrics`);
     return response.data;
   }
 
