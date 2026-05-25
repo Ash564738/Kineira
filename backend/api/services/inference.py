@@ -27,8 +27,30 @@ from config import (
 logger = logging.getLogger(__name__)
 
 
+def _normalize_one_hand(hand: np.ndarray) -> np.ndarray:
+    if not np.any(np.abs(hand) > 1e-6):
+        return hand
+
+    hand = hand.copy()
+
+    wrist = hand[0].copy()
+    hand -= wrist
+
+    mcp_ids = [5, 9, 13, 17]
+    scales = [np.linalg.norm(hand[i]) for i in mcp_ids if np.linalg.norm(hand[i]) > 1e-6]
+
+    if len(scales) > 0:
+        scale = float(np.mean(scales))
+    else:
+        scale = float(np.linalg.norm(hand[9]))
+
+    if scale > 1e-6:
+        hand /= scale
+
+    return hand
+
+
 def normalize_relative_hand(sequence: np.ndarray) -> np.ndarray:
-    """Đưa tọa độ tay về relative to wrist."""
     seq = sequence.copy()
     T = seq.shape[0]
 
@@ -36,13 +58,11 @@ def normalize_relative_hand(sequence: np.ndarray) -> np.ndarray:
         frame = seq[t]
 
         left_hand = frame[LEFT_HAND_START:LEFT_HAND_END].reshape(N_HAND, 3)
-        wrist_left = left_hand[0].copy()
-        left_hand -= wrist_left
+        left_hand = _normalize_one_hand(left_hand)
         frame[LEFT_HAND_START:LEFT_HAND_END] = left_hand.flatten()
 
         right_hand = frame[RIGHT_HAND_START:RIGHT_HAND_END].reshape(N_HAND, 3)
-        wrist_right = right_hand[0].copy()
-        right_hand -= wrist_right
+        right_hand = _normalize_one_hand(right_hand)
         frame[RIGHT_HAND_START:RIGHT_HAND_END] = right_hand.flatten()
 
     return seq

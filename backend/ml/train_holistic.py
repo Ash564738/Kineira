@@ -44,22 +44,81 @@ from config import (
 logger = logging.getLogger(__name__)
 
 
+def _normalize_one_hand(hand: np.ndarray) -> np.ndarray:
+    """
+    hand: (21, 3)
+    - trừ wrist
+    - scale theo palm size để giảm phụ thuộc khoảng cách camera
+    """
+    if not np.any(np.abs(hand) > 1e-6):
+        return hand
+
+    hand = hand.copy()
+
+    wrist = hand[0].copy()
+    hand -= wrist
+
+    mcp_ids = [5, 9, 13, 17]
+    scales = [np.linalg.norm(hand[i]) for i in mcp_ids if np.linalg.norm(hand[i]) > 1e-6]
+
+    if len(scales) > 0:
+        scale = float(np.mean(scales))
+    else:
+        scale = float(np.linalg.norm(hand[9]))
+
+    if scale > 1e-6:
+        hand /= scale
+
+    return hand
+
+
 def normalize_relative_hand(sequence: np.ndarray) -> np.ndarray:
     seq = sequence.copy()
-    T = seq.shape[0]
 
-    for t in range(T):
+    for t in range(seq.shape[0]):
         frame = seq[t]
 
-        left_hand = frame[LEFT_HAND_START:LEFT_HAND_END].reshape(N_HAND, 3)
-        wrist_left = left_hand[0].copy()
-        left_hand -= wrist_left
-        frame[LEFT_HAND_START:LEFT_HAND_END] = left_hand.flatten()
+        left = frame[LEFT_HAND_START:LEFT_HAND_END].reshape(N_HAND, 3)
+        left = _normalize_one_hand(left)
+        frame[LEFT_HAND_START:LEFT_HAND_END] = left.flatten()
 
-        right_hand = frame[RIGHT_HAND_START:RIGHT_HAND_END].reshape(N_HAND, 3)
-        wrist_right = right_hand[0].copy()
-        right_hand -= wrist_right
-        frame[RIGHT_HAND_START:RIGHT_HAND_END] = right_hand.flatten()
+        right = frame[RIGHT_HAND_START:RIGHT_HAND_END].reshape(N_HAND, 3)
+        right = _normalize_one_hand(right)
+        frame[RIGHT_HAND_START:RIGHT_HAND_END] = right.flatten()
+
+    return seq
+
+def rotation_augment(sequence: np.ndarray, max_angle_deg: float = 12) -> np.ndarray:
+    """
+    Xoay nhẹ quanh trục Z cho từng bàn tay.
+    Chỉ áp dụng cho hand landmarks, giữ nguyên pose/face.
+    """
+    seq = sequence.copy()
+
+    angle = np.deg2rad(np.random.uniform(-max_angle_deg, max_angle_deg))
+    cos_a = np.cos(angle)
+    sin_a = np.sin(angle)
+
+    rot = np.array([
+        [cos_a, -sin_a],
+        [sin_a,  cos_a]
+    ], dtype=np.float32)
+
+    for hand_start, hand_end in [
+        (LEFT_HAND_START, LEFT_HAND_END),
+        (RIGHT_HAND_START, RIGHT_HAND_END),
+    ]:
+        hand = seq[:, hand_start:hand_end].reshape(-1, N_HAND, 3)
+
+        if not np.any(np.abs(hand) > 1e-6):
+            continue
+
+        # xoay quanh wrist (sau normalize_relative_hand thì wrist đã ở gốc)
+        xy = hand[..., :2]
+        xy = xy @ rot.T
+        hand[..., :2] = xy
+
+        seq[:, hand_start:hand_end] = hand.reshape(seq.shape[0], N_HAND * 3)
 
     return seq
 
@@ -194,7 +253,11 @@ class HolisticTrainer:
                         raw_sequences.append(warped)
                         labels.append(self.label_map[action])
 
-            logger.info(f"[TRAINER_LOAD] Loaded {loaded_count} sequences for action '{action}' (augmented x3)")
+                        rotated = rotation_augment(seq_arr, max_angle_deg=12)
+                        raw_sequences.append(rotated)
+                        labels.append(self.label_map[action])
+
+            logger.info(f"[TRAINER_LOAD] Loaded {loaded_count} sequences for action '{action}' (augmented x4)")
 
         if len(raw_sequences) == 0:
             logger.error("[TRAINER_LOAD] No valid sequences found")
@@ -354,7 +417,7 @@ class HolisticTrainer:
 
     def save_reference_sequences(self, X: np.ndarray, y: np.ndarray):
         try:
-            from ml.hand_utils import detect_active_hands
+            from ml.hand_utils import detect_active_hands, detect_hand_activity_per_frame
         except ImportError:
             logger.warning("[REF] ml.hand_utils not found, skipping reference saving.")
             return
@@ -370,15 +433,38 @@ class HolisticTrainer:
                 continue
 
             left_seqs, right_seqs, both_seqs = [], [], []
+            unexpected_both = 0
 
-            for seq in action_seqs:
+            for idx, seq in enumerate(action_seqs):
                 has_left, has_right = detect_active_hands(seq)
-                if has_left and not has_right:
+                left_active, right_active = detect_hand_activity_per_frame(seq)
+
+                left_frames = int(np.sum(left_active))
+                right_frames = int(np.sum(right_active))
+
+                if has_left and has_right:
+                    if action == "LOVE":
+                        both_seqs.append(seq)
+                    else:
+                        unexpected_both += 1
+
+                        # Nếu một bên trội rõ ràng, ép về bên đó
+                        if left_frames > right_frames * 1.25:
+                            left_seqs.append(seq)
+                        elif right_frames > left_frames * 1.25:
+                            right_seqs.append(seq)
+                        else:
+                            # Cực kỳ mơ hồ thì bỏ qua, không đưa vào both
+                            logger.debug(
+                                f"[REF_DEBUG] {action} seq {idx} ambiguous BOTH "
+                                f"(left_frames={left_frames}, right_frames={right_frames})"
+                            )
+
+                elif has_left and not has_right:
                     left_seqs.append(seq)
+
                 elif has_right and not has_left:
                     right_seqs.append(seq)
-                elif has_left and has_right:
-                    both_seqs.append(seq)
 
             if len(left_seqs) > 0:
                 left_medoid = self._find_medoid_sequence(np.array(left_seqs))
@@ -394,6 +480,17 @@ class HolisticTrainer:
                 both_medoid = self._find_medoid_sequence(np.array(both_seqs))
                 np.save(os.path.join(ref_dir, f"ref_{action}_both.npy"), both_medoid)
                 logger.info(f"[REF] Saved ref_{action}_both.npy ({len(both_seqs)} sequences)")
+
+            if action == "LOVE":
+                logger.info(
+                    f"[REF] LOVE summary: both={len(both_seqs)} "
+                    f"(expected two-hand action)"
+                )
+            else:
+                logger.info(
+                    f"[REF] {action} summary: left={len(left_seqs)}, right={len(right_seqs)}, "
+                    f"unexpected_both={unexpected_both}"
+                )
 
             if len(left_seqs) == 0 and len(right_seqs) == 0 and len(both_seqs) == 0:
                 logger.warning(f"[REF] No hand-specific sequences found for action {action}")

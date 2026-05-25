@@ -18,27 +18,30 @@ from config import (
 
 logger = logging.getLogger(__name__)
 
+_EPS = 1e-6
 
-def _has_hand_signal(hand_slice: np.ndarray) -> bool:
+
+def _hand_presence_score(hand_slice: np.ndarray) -> float:
     if hand_slice.size == 0:
-        return False
+        return 0.0
 
     flat = hand_slice.reshape(hand_slice.shape[0], -1)
 
-    # Tỷ lệ phần tử khác 0
-    active_values = np.count_nonzero(np.abs(flat) > 1e-6)
-    active_threshold = max(20, int(flat.size * 0.01))
-    if active_values > active_threshold:
-        return True
+    per_frame_nonzero = np.count_nonzero(np.abs(flat) > _EPS, axis=1)
+    min_landmarks_per_frame = max(6, int(flat.shape[1] * 0.15))
+    active_frame_ratio = float(np.mean(per_frame_nonzero >= min_landmarks_per_frame))
 
-    # Nếu sequence có nhiều frame thì dùng motion làm tín hiệu phụ
+    mean_abs = float(np.mean(np.abs(flat)))
+    intensity_score = float(np.clip(mean_abs / 0.03, 0.0, 1.0))
+
     if flat.shape[0] >= 2:
-        motion = float(np.sum(np.abs(np.diff(flat, axis=0))))
-        motion_threshold = max(2.0, float(flat.size) * 0.002)
-        if motion > motion_threshold:
-            return True
+        motion = float(np.mean(np.abs(np.diff(flat, axis=0))))
+        motion_score = float(np.clip(motion / 0.01, 0.0, 1.0))
+    else:
+        motion_score = 0.0
 
-    return False
+    score = 0.65 * active_frame_ratio + 0.25 * intensity_score + 0.10 * motion_score
+    return float(np.clip(score, 0.0, 1.0))
 
 
 def detect_active_hands(sequence: np.ndarray) -> Tuple[bool, bool]:
@@ -48,13 +51,15 @@ def detect_active_hands(sequence: np.ndarray) -> Tuple[bool, bool]:
     left_slice = sequence[:, LEFT_HAND_START:LEFT_HAND_END]
     right_slice = sequence[:, RIGHT_HAND_START:RIGHT_HAND_END]
 
-    has_left = _has_hand_signal(left_slice)
-    has_right = _has_hand_signal(right_slice)
+    left_score = _hand_presence_score(left_slice)
+    right_score = _hand_presence_score(right_slice)
+
+    has_left = left_score >= 0.35
+    has_right = right_score >= 0.35
 
     logger.debug(
-        f"[HAND_DETECT] left={has_left}, right={has_right}, "
-        f"left_nonzero={np.count_nonzero(np.abs(left_slice) > 1e-6)}, "
-        f"right_nonzero={np.count_nonzero(np.abs(right_slice) > 1e-6)}"
+        "[HAND_DETECT] left=%s (%.3f), right=%s (%.3f)",
+        has_left, left_score, has_right, right_score
     )
     return has_left, has_right
 
@@ -62,8 +67,8 @@ def detect_active_hands(sequence: np.ndarray) -> Tuple[bool, bool]:
 def detect_hand_activity_per_frame(sequence: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     left_data = sequence[:, LEFT_HAND_INDICES]
     right_data = sequence[:, RIGHT_HAND_INDICES]
-    left_active = np.any(np.abs(left_data) > 1e-6, axis=1)
-    right_active = np.any(np.abs(right_data) > 1e-6, axis=1)
+    left_active = np.any(np.abs(left_data) > _EPS, axis=1)
+    right_active = np.any(np.abs(right_data) > _EPS, axis=1)
     return left_active, right_active
 
 
@@ -119,7 +124,7 @@ def normalize_hand_representation(
     reference_seq: np.ndarray
 ) -> Tuple[np.ndarray, np.ndarray, str]:
     """
-    Chuẩn hóa hand handedness giữa user và reference.
+    Chuẩn hóa handedness giữa user và reference.
     Nếu user/ref lệch trái-phải thì mirror user để khớp reference.
     """
     user_left, user_right = detect_active_hands(user_seq)
@@ -128,13 +133,11 @@ def normalize_hand_representation(
     logger.debug(f"[HAND_NORM] User hands: left={user_left}, right={user_right}")
     logger.debug(f"[HAND_NORM] Reference hands: left={ref_left}, right={ref_right}")
 
-    # Cùng side
     if user_left and ref_left:
         return user_seq, reference_seq, "same_left"
     if user_right and ref_right:
         return user_seq, reference_seq, "same_right"
 
-    # User trái, ref phải -> mirror user sang phải
     if user_left and ref_right:
         user_normalized = user_seq.copy()
         left_hand = user_normalized[:, LEFT_HAND_INDICES]
@@ -143,7 +146,6 @@ def normalize_hand_representation(
         user_normalized[:, LEFT_HAND_INDICES] = 0
         return user_normalized, reference_seq, "mirror_user_left_to_right"
 
-    # User phải, ref trái -> mirror user sang trái
     if user_right and ref_left:
         user_normalized = user_seq.copy()
         right_hand = user_normalized[:, RIGHT_HAND_INDICES]
@@ -152,7 +154,6 @@ def normalize_hand_representation(
         user_normalized[:, RIGHT_HAND_INDICES] = 0
         return user_normalized, reference_seq, "mirror_user_right_to_left"
 
-    # Hai tay so với hai tay, hoặc cấu hình không rõ ràng
     if (user_left and user_right) and (ref_left and ref_right):
         return user_seq, reference_seq, "both"
     if (user_left and user_right) and (ref_left or ref_right):
