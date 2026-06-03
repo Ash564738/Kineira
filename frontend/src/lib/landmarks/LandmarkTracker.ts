@@ -16,7 +16,10 @@ import {
 } from '../../types/landmarks';
 
 // Chỉ số Pose thân trên (23 điểm đầu tiên của MediaPipe Pose)
-const POSE_UPPER_INDICES = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22];
+const POSE_UPPER_INDICES = [
+  0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+  13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+];
 
 export class LandmarkTracker {
   private holistic!: HolisticLandmarker;
@@ -25,6 +28,7 @@ export class LandmarkTracker {
   private callback?: (sample: FrameSample) => void;
   private animationId: number | null = null;
   private running = false;
+  private lastVideoTime = -1;
 
   async init(canvas: HTMLCanvasElement, callback?: (sample: FrameSample) => void) {
     this.canvas = canvas;
@@ -40,15 +44,16 @@ export class LandmarkTracker {
       baseOptions: {
         modelAssetPath:
           'https://storage.googleapis.com/mediapipe-models/holistic_landmarker/holistic_landmarker/float16/1/holistic_landmarker.task',
+          delegate: 'GPU',
       },
       runningMode: 'VIDEO',
-      minFaceDetectionConfidence: 0.5,
-      minFacePresenceConfidence: 0.5,
-      minFaceSuppressionThreshold: 0.3,
-      minHandLandmarksConfidence: 0.5,
-      minPoseDetectionConfidence: 0.5,
-      minPosePresenceConfidence: 0.5,
-      minPoseSuppressionThreshold: 0.3,
+      minFaceDetectionConfidence: 0.8,
+      minFacePresenceConfidence: 0.8,
+      minFaceSuppressionThreshold: 0.8,
+      minHandLandmarksConfidence: 0.3,
+      minPoseDetectionConfidence: 0.8,
+      minPosePresenceConfidence: 0.8,
+      minPoseSuppressionThreshold: 0.8,
       outputFaceBlendshapes: false,
       outputPoseSegmentationMasks: false,
     });
@@ -56,13 +61,27 @@ export class LandmarkTracker {
 
   start(video: HTMLVideoElement) {
     if (this.running) return;
+
     this.running = true;
+
+    let frameCount = 0;
+    let lastFpsTime = performance.now();
 
     const render = () => {
       if (!this.running) return;
+
       try {
         const now = performance.now();
+
+        // Measure inference time
+        const t0 = performance.now();
+
         const results = this.holistic.detectForVideo(video, now);
+
+        const t1 = performance.now();
+
+        const inferenceMs = t1 - t0;
+
         const { frame, keypoints } = this.convertResults(results);
 
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
@@ -74,17 +93,35 @@ export class LandmarkTracker {
           timestamp: now,
         });
 
+        // FPS monitor
+        frameCount++;
+
+        if (now - lastFpsTime >= 1000) {
+          const fps =
+            (frameCount * 1000) /
+            (now - lastFpsTime);
+
+          console.log(
+            `[Tracker] FPS=${fps.toFixed(1)} | Infer=${inferenceMs.toFixed(1)}ms`
+          );
+
+          frameCount = 0;
+          lastFpsTime = now;
+        }
+
         this.animationId = requestAnimationFrame(render);
       } catch (error) {
         console.error('[LandmarkTracker] render loop failed:', error);
         this.animationId = requestAnimationFrame(render);
       }
     };
+
     render();
   }
 
   stop() {
     this.running = false;
+    this.lastVideoTime = -1;
     if (this.animationId !== null) {
       cancelAnimationFrame(this.animationId);
       this.animationId = null;
@@ -102,11 +139,20 @@ export class LandmarkTracker {
       face: [],
     };
 
-    // Để vẽ, ta vẫn lấy toàn bộ landmarks gốc (cho đẹp)
+    // Để vẽ, lấy toàn bộ landmarks gốc
     frame.pose = this.extractPoseFull(results.poseLandmarks?.[0]);
-    frame.face = this.extractXYZ(results.faceLandmarks?.[0], 468); // Vẽ toàn bộ mặt
+    frame.face = this.extractXYZ(results.faceLandmarks?.[0], 468);
     frame.left_hand = this.extractXYZ(results.leftHandLandmarks?.[0], N_HAND);
     frame.right_hand = this.extractXYZ(results.rightHandLandmarks?.[0], N_HAND);
+
+    const leftCount = results.leftHandLandmarks?.[0]?.length ?? 0;
+    const rightCount = results.rightHandLandmarks?.[0]?.length ?? 0;
+    const poseCount = results.poseLandmarks?.[0]?.length ?? 0;
+    const faceCount = results.faceLandmarks?.[0]?.length ?? 0;
+
+    console.log(
+      `[LandmarkTracker] landmarks: left=${leftCount}, right=${rightCount}, pose=${poseCount}, face=${faceCount}`
+    );
 
     const keypoints = this.extractKeypoints(results);
 
@@ -209,6 +255,7 @@ export class LandmarkTracker {
   private toPixel(p: LandmarkPoint): { px: number; py: number } {
     return { px: p.x * this.canvas.width, py: p.y * this.canvas.height };
   }
+
   private drawPoint(p: LandmarkPoint, radius: number, color: string) {
     const { px, py } = this.toPixel(p);
     this.ctx.beginPath();
@@ -216,6 +263,7 @@ export class LandmarkTracker {
     this.ctx.fillStyle = color;
     this.ctx.fill();
   }
+
   private drawLine(a: LandmarkPoint, b: LandmarkPoint, color: string, width: number) {
     const { px: ax, py: ay } = this.toPixel(a);
     const { px: bx, py: by } = this.toPixel(b);
@@ -229,32 +277,34 @@ export class LandmarkTracker {
 
   private drawFrame(frame: FrameLandmarks) {
     const HAND_CONNECTIONS = [
-      [0,1],[1,2],[2,3],[3,4],
-      [0,5],[5,6],[6,7],[7,8],
-      [5,9],[9,10],[10,11],[11,12],
-      [9,13],[13,14],[14,15],[15,16],
-      [13,17],[0,17],[17,18],[18,19],[19,20],
+      [0, 1], [1, 2], [2, 3], [3, 4],
+      [0, 5], [5, 6], [6, 7], [7, 8],
+      [5, 9], [9, 10], [10, 11], [11, 12],
+      [9, 13], [13, 14], [14, 15], [15, 16],
+      [13, 17], [0, 17], [17, 18], [18, 19], [19, 20],
     ];
+
     const POSE_CONNECTIONS = [
-      [0,1],[1,2],[2,3],[3,7],
-      [0,4],[4,5],[5,6],[6,8],
-      [9,10],[11,12],
-      [11,13],[13,15],[15,17],[17,19],[19,15],[15,21],
-      [12,14],[14,16],[16,18],[18,20],[20,16],[16,22],
-      [11,23],[12,24],[23,24],
-      [23,25],[25,27],[27,29],[29,31],[31,27],
-      [24,26],[26,28],[28,30],[30,32],[32,28],
+      [0, 1], [1, 2], [2, 3], [3, 7],
+      [0, 4], [4, 5], [5, 6], [6, 8],
+      [9, 10], [11, 12],
+      [11, 13], [13, 15], [15, 17], [17, 19], [19, 15], [15, 21],
+      [12, 14], [14, 16], [16, 18], [18, 20], [20, 16], [16, 22],
+      [11, 23], [12, 24], [23, 24],
+      [23, 25], [25, 27], [27, 29], [29, 31], [31, 27],
+      [24, 26], [26, 28], [28, 30], [30, 32], [32, 28],
     ];
+
     const FACE_CONTOUR_CONNECTIONS = [
-      [10,338],[338,297],[297,332],[332,284],
-      [284,251],[251,389],[389,356],[356,454],
-      [454,323],[323,361],[361,288],[288,397],
-      [397,365],[365,379],[379,378],[378,400],
-      [400,377],[377,152],[152,148],[148,176],
-      [176,149],[149,150],[150,136],[136,172],
-      [172,58],[58,132],[132,93],[93,234],
-      [234,127],[127,162],[162,21],[21,54],
-      [54,103],[103,67],[67,109],[109,10]
+      [10, 338], [338, 297], [297, 332], [332, 284],
+      [284, 251], [251, 389], [389, 356], [356, 454],
+      [454, 323], [323, 361], [361, 288], [288, 397],
+      [397, 365], [365, 379], [379, 378], [378, 400],
+      [400, 377], [377, 152], [152, 148], [148, 176],
+      [176, 149], [149, 150], [150, 136], [136, 172],
+      [172, 58], [58, 132], [132, 93], [93, 234],
+      [234, 127], [127, 162], [162, 21], [21, 54],
+      [54, 103], [103, 67], [67, 109], [109, 10],
     ];
 
     this.drawSkeleton(frame.left_hand, HAND_CONNECTIONS, '#00ff00', '#ff0000', 2, 2.5);
@@ -272,11 +322,13 @@ export class LandmarkTracker {
     jointRadius: number,
   ) {
     if (!points?.length) return;
+
     for (const [a, b] of connections) {
       if (points[a] && points[b]) {
         this.drawLine(points[a], points[b], lineColor, lineWidth);
       }
     }
+
     for (const p of points) {
       if (!p) continue;
       this.drawPoint(p, jointRadius, jointColor);

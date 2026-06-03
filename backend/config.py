@@ -16,7 +16,9 @@ import os
 
 ACTIONS = list("AB") + [
     "HELLO",
-    "LOVE"
+    "LOVE",
+    "ME",
+    "YOU",
 ]
 
 VIDEOS_PER_ACTION = 100

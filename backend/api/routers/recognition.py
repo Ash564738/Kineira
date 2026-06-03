@@ -8,6 +8,7 @@ from pathlib import Path
 
 from api.services.inference import inference_service, normalize_relative_hand
 from api.services.scoring import (
+    compute_embedding_similarity,
     compute_finger_details,
     compute_hand_aware_score,
     compute_handshape_similarity,
@@ -16,7 +17,7 @@ from api.services.scoring import (
 )
 from config import LEFT_HAND_INDICES, N_HAND, RIGHT_HAND_INDICES
 from ml.hand_utils import detect_active_hands, analyze_hand_configuration
-
+WORD_MAP = {"ME": "I"}
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
@@ -28,6 +29,7 @@ class TranslateRequest(BaseModel):
 class TranslateResponse(BaseModel):
     sign: str
     confidence: float
+    sentence: str = ""
 
 
 class ScoreRequest(BaseModel):
@@ -47,6 +49,7 @@ class ScoreResponse(BaseModel):
     confidence: Optional[float] = None
     hand_similarity: Optional[float] = None
     finger_details: Optional[Dict[str, Any]] = None
+    embedding_similarity: Optional[float] = None
 
 
 def _unique_ordered(items: List[str]) -> List[str]:
@@ -74,13 +77,28 @@ async def translate(req: TranslateRequest) -> TranslateResponse:
     logger.info("=" * 80)
     try:
         result = inference_service.predict_keras(req.keypoints_sequence)
+
+        raw_sign = result.get("sign", "unknown")
+        confidence = result.get("confidence", 0.0)
+
+        mapped_sign = WORD_MAP.get(raw_sign, raw_sign)
+        mapped_sentence = " ".join(
+            WORD_MAP.get(word, word)
+            for word in inference_service.smoother.current_sentence
+        )
+
         if not result.get("stable", False):
             logger.info("[TRANSLATE] Not yet stable, returning pending")
-            return TranslateResponse(sign="pending", confidence=0.0)
+            return TranslateResponse(
+                sign="pending",
+                confidence=0.0,
+                sentence=mapped_sentence
+            )
 
         response = TranslateResponse(
-            sign=result.get("sign", "unknown"),
-            confidence=result.get("confidence", 0.0),
+            sign=mapped_sign,
+            confidence=confidence,
+            sentence=mapped_sentence,
         )
         logger.info(f"[TRANSLATE] Successful - sign: {response.sign}, confidence: {response.confidence}")
         return response
@@ -197,6 +215,17 @@ async def score(req: ScoreRequest) -> ScoreResponse:
             hand_indices = list(LEFT_HAND_INDICES) + list(RIGHT_HAND_INDICES)
             active_hand_for_score = "both"
 
+    user_emb = inference_service.get_embedding(req.user_sequence)
+    ref_dir = inference_service.keras_model_path.parent
+    ref_emb_path = ref_dir / f"ref_{expected_sign}_{loaded_hand}_embed.npy"
+    emb_sim = 0.5   # mặc định nếu không tìm thấy
+    if ref_emb_path.exists():
+        ref_emb = np.load(ref_emb_path)
+        emb_sim = compute_embedding_similarity(user_emb, ref_emb)
+        logger.info(f"[SCORE] Embedding similarity: {emb_sim:.4f}")
+    else:
+        logger.warning(f"[SCORE] No embedding reference for {expected_sign}_{loaded_hand}")
+
     # 7) Handshape similarity mới: curl/extension, không dùng landmark distance thô
     hand_sim_pct = compute_handshape_similarity(
         user_normalized[:, hand_indices],
@@ -220,6 +249,8 @@ async def score(req: ScoreRequest) -> ScoreResponse:
         expected_sign=expected_sign,
         active_hand=active_hand_for_score,
         hand_sim_override=hand_sim_pct / 100.0 if hand_sim_pct > 0 else 0.0,
+        embedding_sim=emb_sim,
+        confidence=confidence
     )
 
     overall_score = score_dict["score"]
@@ -239,10 +270,12 @@ async def score(req: ScoreRequest) -> ScoreResponse:
             "face_score": score_dict["face_score"],
             "penalty_applied": score_dict["penalty_applied"],
             "normalization_method": f"ref_{loaded_hand}",
+            "embedding_similarity": emb_sim,
         },
         sign=predicted_sign,
         confidence=confidence,
         hand_similarity=hand_sim_pct,
+        embedding_similarity=emb_sim,
         finger_details=finger_feedback,
     )
 

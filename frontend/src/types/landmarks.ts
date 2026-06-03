@@ -1,3 +1,5 @@
+import { list } from "postcss/lib/postcss";
+
 // src/types/landmarks.ts
 export interface LandmarkPoint {
   x: number;

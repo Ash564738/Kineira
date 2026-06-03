@@ -19,7 +19,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const Collect: React.FC = () => {
   // ========== TẤT CẢ HOOKS PHẢI ĐƯỢC GỌI TRƯỚC RETURN ==========
-  const { user, isLoading } = useAuth();
+  const { user } = useAuth();
   const router = useRouter();
 
   const [allStatus, setAllStatus] = useState<AllStatus>({});
@@ -49,12 +49,6 @@ const Collect: React.FC = () => {
   const pauseResolveRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    if (!isLoading && !user) {
-      router.push('/auth/login');
-    }
-  }, [user, isLoading]);
-
-  useEffect(() => {
     loadAllStatus();
     const interval = setInterval(loadAllStatus, STATUS_POLL_MS);
     return () => clearInterval(interval);
@@ -73,14 +67,6 @@ const Collect: React.FC = () => {
     }, 1000);
     return () => clearInterval(poll);
   }, [isTraining]);
-
-  if (isLoading || !user) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-        <div className="text-white">Please log in to access this page.</div>
-      </div>
-    );
-  }
 
   async function loadAllStatus() {
     try {
@@ -184,8 +170,8 @@ const Collect: React.FC = () => {
   // Hàm chờ chuyển tay (đặc biệt)
   const waitForHandSwitch = (): Promise<void> => {
     return pauseWithUI(
-      'Hãy đổi tay thực hiện động tác. Nhấn "Đã sẵn sàng" để tiếp tục.',
-      0,  // không đếm ngược
+      'Please switch hands to perform the gesture. Click "Ready" to continue.',
+      0,
       true
     );
   };
@@ -193,7 +179,7 @@ const Collect: React.FC = () => {
   // Hàm nghỉ giữa video
   const pauseBetweenVideos = (videoNum: number): Promise<void> => {
     return pauseWithUI(
-      `Nghỉ ngơi sau video ${videoNum}. Tiếp tục sau ${PAUSE_SECONDS}s...`,
+      `Please take a break after video ${videoNum}. Continuing in ${PAUSE_SECONDS}s...`,
       PAUSE_SECONDS,
       true
     );
@@ -215,7 +201,7 @@ const Collect: React.FC = () => {
       const sample = await waitForValidSample();
       if (!sample) {
         // Không dừng toàn bộ, chỉ báo lỗi video này
-        setError(`Không có keypoints hợp lệ cho video ${videoNum}, frame ${frameNum}. Video này sẽ được thử lại sau.`);
+        setError(`No valid keypoints for video ${videoNum}, frame ${frameNum}. This video will be retried later.`);
         console.warn(`[Collect] frame ${frameNum} invalid or timeout`);
         return false;  // thất bại video này
       }
@@ -240,14 +226,14 @@ const Collect: React.FC = () => {
   // Retry các video lỗi
   const retryFailedVideos = async (action: string, failed: number[]) => {
     setError(null);
-    setInfo(`Còn ${failed.length} video bị lỗi. Chuẩn bị quay lại...`);
+    setInfo(`${failed.length} failed video(s). Preparing to retry...`);
     for (const videoNum of failed) {
       if (stopRequested.current) break;
       // Xóa video cũ nếu có và bắt đầu với overwrite
       await collectionService.deleteVideo(action, videoNum);
       const startOk = await collectionService.startCollection(action, videoNum, true); // overwrite
       if (!startOk) {
-        setError(`Không thể bắt đầu lại video ${videoNum}. Dừng retry.`);
+        setError(`Cannot restart video ${videoNum}. Stopping retry.`);
         break;
       }
       // Cập nhật UI
@@ -255,12 +241,12 @@ const Collect: React.FC = () => {
       const ok = await captureOneVideo(action, videoNum);
       if (!ok) {
         // Nếu vẫn lỗi, có thể cho vào danh sách failed mới hoặc dừng
-        setError(`Video ${videoNum} vẫn lỗi sau khi thử lại.`);
+        setError(`Video ${videoNum} still failed after retry.`);
         // Ở đây ta break, bạn có thể xử lý tinh tế hơn
         break;
       }
       // Nghỉ giữa các lần retry
-      if (!stopRequested.current) await pauseWithUI(`Nghỉ ngơi sau video ${videoNum}.`, PAUSE_SECONDS, true);
+      if (!stopRequested.current) await pauseWithUI(`Please take a break after video ${videoNum}.`, PAUSE_SECONDS, true);
       await loadAllStatus();
     }
     setInfo(null);
@@ -421,7 +407,7 @@ const Collect: React.FC = () => {
                 onClick={handleContinuePause}
                 className="px-4 py-2 bg-white text-black rounded-lg font-semibold hover:bg-white/90"
               >
-                Tiếp tục ngay
+                Continue Now
               </button>
             )}
           </div>

@@ -1,7 +1,7 @@
 // src/services/api/client.ts
 import { Attempt, AttemptPayload, Lesson, PredictionResult, Progress, ScoringResult } from "../../types/api";
 import { API_BASE_URL } from "./config";
-const getToken = () => localStorage.getItem('token');
+const getToken = () => localStorage.getItem('auth_token');
 
 export async function fetchWithToken(url: string, options: RequestInit = {}) {
   const token = getToken();

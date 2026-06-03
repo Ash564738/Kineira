@@ -1,11 +1,12 @@
 // src/pages/index.tsx
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import CameraView from "../components/camera/CameraView";
 import TopNav from "../components/layout/TopNav";
 import { FRAMES_PER_VIDEO, FEATURE_SIZE, FrameSample } from "../types/landmarks";
 import { resetTranslate } from "@/services/api/client";
 
-const COOLDOWN_MS = 500;
+const WINDOW_SIZE = 30;      // số frame mỗi lần gửi
+const SLIDE_STEP = 5;        // trượt 5 frame mỗi lần (có thể chỉnh)
 
 const log = {
   info: (msg: string, data?: any) => console.log(`[TRANSLATE_PAGE] INFO: ${msg}`, data || ''),
@@ -19,33 +20,26 @@ const Translate: React.FC = () => {
   const [prediction, setPrediction] = useState("");
   const [confidence, setConfidence] = useState(0.0);
   const [error, setError] = useState("");
+  const [sentence, setSentence] = useState("");
 
   const isTranslatingRef = useRef(false);
-  const keypointsBufferRef = useRef<number[][]>([]);
-  const cooldownRef = useRef(false);
-  const cooldownTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const frameBufferRef = useRef<number[][]>([]);   // buffer lớn
+  const processingRef = useRef(false);              // tránh gọi API chồng lấn
+  const lastSentIndex = useRef(0);                  // vị trí cuối cùng đã gửi
+  const [readyToSign, setReadyToSign] = useState(false);
 
   useEffect(() => {
     isTranslatingRef.current = isTranslating;
     log.info(`Translation mode ${isTranslating ? 'ENABLED' : 'DISABLED'}`);
     if (isTranslating) {
-      keypointsBufferRef.current = [];
-      cooldownRef.current = false;
-      if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
-    } else {
-      if (cooldownTimerRef.current) {
-        clearTimeout(cooldownTimerRef.current);
-        cooldownTimerRef.current = null;
-      }
+      frameBufferRef.current = [];
+      processingRef.current = false;
+      lastSentIndex.current = 0;
     }
   }, [isTranslating]);
 
-  const translateSequence = async (sequence: number[][]) => {
-    log.info("=".repeat(60));
+  const translateWindow = async (sequence: number[][]) => {
     log.info("TRANSLATE API CALL STARTED");
-    log.info("=".repeat(60));
-    log.info(`Sending translation request - sequence length: ${sequence.length} frames`);
-
     try {
       const res = await fetch("http://localhost:8000/translate", {
         method: "POST",
@@ -56,12 +50,12 @@ const Translate: React.FC = () => {
       if (!res.ok) throw new Error(`API error ${res.status}`);
 
       const data = await res.json();
-      log.info(`Translation result: sign='${data.sign}', confidence=${data.confidence.toFixed(4)}`);
-      log.info("=".repeat(60));
-      log.info("TRANSLATE API CALL COMPLETED");
-      log.info("=".repeat(60));
+      if (data.sentence) {
+        setSentence(data.sentence);
+      }
 
-      // ✅ XỬ LÝ CÁC TRƯỜNG HỢP ĐẶC BIỆT
+      log.info(`Translation result: sign='${data.sign}', confidence=${data.confidence.toFixed(4)}`);
+
       if (data.sign === "unknown") {
         setPrediction("unknown");
         setConfidence(0);
@@ -75,44 +69,52 @@ const Translate: React.FC = () => {
       }
     } catch (err: any) {
       log.error(`Translation failed: ${err.message}`, err);
-      log.info("=".repeat(60));
-      log.info("TRANSLATE API CALL FAILED");
-      log.info("=".repeat(60));
       setError(`Translation failed: ${err.message}`);
     }
   };
 
-  const handleFrameDetected = (sample: FrameSample) => {
-    if (!isTranslatingRef.current) return;
-    if (cooldownRef.current) return;
-
-    if (sample.keypoints.length === FEATURE_SIZE) {
-      keypointsBufferRef.current.push([...sample.keypoints]);
-
-      log.debug(`Frame added to buffer - current length: ${keypointsBufferRef.current.length}/${FRAMES_PER_VIDEO}`);
-
-      if (keypointsBufferRef.current.length === FRAMES_PER_VIDEO) {
-        const sequence = [...keypointsBufferRef.current];
-        translateSequence(sequence);
-        keypointsBufferRef.current = [];
-
-        cooldownRef.current = true;
-        if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
-        cooldownTimerRef.current = setTimeout(() => {
-          cooldownRef.current = false;
-          cooldownTimerRef.current = null;
-          log.debug("Cooldown ended, ready for next sign");
-        }, COOLDOWN_MS);
+  const handleFrameDetected = useCallback((sample: FrameSample) => {
+      if (!readyToSign) {
+        frameBufferRef.current.push([...sample.keypoints]);
+        if (frameBufferRef.current.length >= WINDOW_SIZE) {
+          setReadyToSign(true);
+        }
+        return;
       }
-    } else {
-      log.debug(`Invalid frame - keypoints length: ${sample.keypoints.length}, expected: ${FEATURE_SIZE}`);
-    }
-  };
+      if (!isTranslatingRef.current) return;
+
+      if (sample.keypoints.length !== FEATURE_SIZE) {
+        log.debug(`Invalid frame - keypoints length: ${sample.keypoints.length}`);
+        return;
+      }
+
+      frameBufferRef.current.push([...sample.keypoints]);
+
+      if (frameBufferRef.current.length < WINDOW_SIZE) return;
+
+      if (processingRef.current) return;
+
+      processingRef.current = true;
+
+      const buffer = frameBufferRef.current;
+      const window = buffer.slice(-WINDOW_SIZE);
+
+      translateWindow(window).finally(() => {
+        processingRef.current = false;
+      });
+
+      if (buffer.length > 60) {
+        frameBufferRef.current = buffer.slice(-60);
+      }
+  }, [readyToSign]);
+
 
   const startTranslation = async () => {
     setPrediction("");
     setConfidence(0.0);
     setError("");
+    setSentence("");
+    setReadyToSign(false);
     try {
       await resetTranslate();
     } catch (e) {
@@ -123,12 +125,8 @@ const Translate: React.FC = () => {
 
   const stopTranslation = () => {
     setIsTranslating(false);
-    keypointsBufferRef.current = [];
-    cooldownRef.current = false;
-    if (cooldownTimerRef.current) {
-      clearTimeout(cooldownTimerRef.current);
-      cooldownTimerRef.current = null;
-    }
+    frameBufferRef.current = [];
+    processingRef.current = false;
   };
 
   return (
@@ -140,8 +138,29 @@ const Translate: React.FC = () => {
         <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-5">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-lg font-medium">Camera</h2>
-            <div className="text-sm text-white/60">
-              {isTranslating ? "Translating..." : "Ready"}
+            {/* Đèn trạng thái */}
+            <div className="flex items-center gap-2">
+              {isTranslating ? (
+                readyToSign ? (
+                  <>
+                    <span className="relative flex h-3 w-3">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                    </span>
+                    <span className="text-sm font-medium text-green-400">Ready</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="relative flex h-3 w-3">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+                    </span>
+                    <span className="text-sm font-medium text-red-400">Warming up...</span>
+                  </>
+                )
+              ) : (
+                <span className="text-sm text-white/60">Idle</span>
+              )}
             </div>
           </div>
 
@@ -169,13 +188,13 @@ const Translate: React.FC = () => {
             )}
           </div>
 
-          {/* ✅ HIỂN THỊ KẾT QUẢ ĐÃ ĐƯỢC CẢI TIẾN */}
+          {/* Kết quả */}
           <div className="mt-6 p-4 rounded-xl bg-slate-800/50 border border-white/10">
             <div className="text-sm text-white/50 mb-1">Prediction</div>
             {error ? (
               <p className="text-red-400 text-sm">{error}</p>
             ) : prediction === "unknown" ? (
-              <p className="text-yellow-400 italic">Đang phân tích – hãy giữ ký hiệu ổn định...</p>
+              <p className="text-yellow-400 italic">Analyzing – hold the sign steady...</p>
             ) : prediction ? (
               <div>
                 <span className="text-3xl font-bold text-white">{prediction}</span>
@@ -186,6 +205,14 @@ const Translate: React.FC = () => {
             ) : (
               <p className="text-white/40 italic">Waiting for sign...</p>
             )}
+
+            {/* Câu hiện tại */}
+            <div className="mt-4 p-3 rounded-lg bg-slate-700/50 border border-white/10">
+              <div className="text-sm text-white/50 mb-1">Current Sentence</div>
+              <p className="text-xl font-semibold text-blue-300">
+                {sentence || "..."}
+              </p>
+            </div>
           </div>
         </div>
       </main>

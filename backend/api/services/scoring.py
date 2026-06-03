@@ -19,27 +19,27 @@ EPS = 1e-6
 
 FINGER_SPECS = {
     "thumb": {
-        "joints": [(0, 1, 2), (1, 2, 3), (2, 3, 4)],
+        "joints": [(1, 2, 3), (2, 3, 4)],
         "tip": 4,
         "mcp": 1,
     },
     "index": {
-        "joints": [(0, 5, 6), (5, 6, 7), (6, 7, 8)],
+        "joints": [(5, 6, 7), (6, 7, 8)],
         "tip": 8,
         "mcp": 5,
     },
     "middle": {
-        "joints": [(0, 9, 10), (9, 10, 11), (10, 11, 12)],
+        "joints": [(9, 10, 11), (10, 11, 12)],
         "tip": 12,
         "mcp": 9,
     },
     "ring": {
-        "joints": [(0, 13, 14), (13, 14, 15), (14, 15, 16)],
+        "joints": [(13, 14, 15), (14, 15, 16)],
         "tip": 16,
         "mcp": 13,
     },
     "pinky": {
-        "joints": [(0, 17, 18), (17, 18, 19), (18, 19, 20)],
+        "joints": [(17, 18, 19), (18, 19, 20)],
         "tip": 20,
         "mcp": 17,
     },
@@ -134,10 +134,22 @@ def _finger_similarity(user_3d: np.ndarray, ref_3d: np.ndarray, finger_name: str
 
     user_ext = _finger_extension_ratio(user_3d, finger_name)
     ref_ext = _finger_extension_ratio(ref_3d, finger_name)
-    ext_sim = 1.0 - abs(user_ext - ref_ext) / max(user_ext, ref_ext, EPS)
-    ext_sim = float(np.clip(ext_sim, 0.0, 1.0))
 
-    combined = 0.85 * curl_sim + 0.15 * ext_sim
+    # Ưu tiên extension: nếu chênh lệch tuyệt đối lớn, điểm thấp hẳn
+    ext_diff = abs(user_ext - ref_ext)
+    max_ext = max(user_ext, ref_ext, EPS)
+    base_ext_sim = 1.0 - ext_diff / max_ext   # công thức cũ
+
+    # Phạt mạnh nếu một bên co lại (ext < 0.7) còn bên kia duỗi (ext > 1.2)
+    if (user_ext < 0.7 and ref_ext > 1.2) or (ref_ext < 0.7 and user_ext > 1.2):
+        penalty = 0.5   # giảm thêm 50%
+    else:
+        penalty = 1.0
+
+    ext_sim = float(np.clip(base_ext_sim * penalty, 0.0, 1.0))
+
+    # Trọng số mới: 0.9 cho extension, 0.1 cho curl
+    combined = 0.1 * curl_sim + 0.9 * ext_sim
     combined = float(np.clip(combined, 0.0, 1.0))
 
     if combined >= 0.9:
@@ -330,6 +342,14 @@ def compute_euclidean_similarity(
     similarity = 1.0 / (1.0 + np.exp((avg_dist - midpoint) / steepness))
     return float(similarity)
 
+def compute_embedding_similarity(user_emb: np.ndarray, ref_emb: np.ndarray) -> float:
+    """Cosine similarity giữa hai vector embedding"""
+    norm_user = np.linalg.norm(user_emb)
+    norm_ref = np.linalg.norm(ref_emb)
+    if norm_user < EPS or norm_ref < EPS:
+        return 0.0
+    cos_sim = np.dot(user_emb, ref_emb) / (norm_user * norm_ref)
+    return float(np.clip((cos_sim + 1.0) / 2.0, 0.0, 1.0))   # co giãn 0..1
 
 def compute_hand_aware_score(
     user_seq: np.ndarray,
@@ -337,44 +357,48 @@ def compute_hand_aware_score(
     predicted_sign: Optional[str] = None,
     expected_sign: Optional[str] = None,
     active_hand: str = "both",
-    hand_sim_override: Optional[float] = None
+    hand_sim_override: Optional[float] = None,
+    embedding_sim: Optional[float] = None,
+    confidence: float = 0.0
 ) -> Dict[str, float]:
-    if active_hand == "left":
-        hand_indices = list(LEFT_HAND_INDICES)
-    elif active_hand == "right":
-        hand_indices = list(RIGHT_HAND_INDICES)
-    else:
-        hand_indices = list(LEFT_HAND_INDICES) + list(RIGHT_HAND_INDICES)
-
+    # Tính hand_sim (ưu tiên override)
     if hand_sim_override is not None:
         hand_sim = float(hand_sim_override)
     else:
+        if active_hand == "left":
+            hand_indices = list(LEFT_HAND_INDICES)
+        elif active_hand == "right":
+            hand_indices = list(RIGHT_HAND_INDICES)
+        else:
+            hand_indices = list(LEFT_HAND_INDICES) + list(RIGHT_HAND_INDICES)
         user_hand = user_seq[:, hand_indices]
         ref_hand = reference_seq[:, hand_indices]
         hand_sim = compute_euclidean_similarity(user_hand, ref_hand)
 
-    user_pose = user_seq[:, 126:126 + 23 * 4]
-    ref_pose = reference_seq[:, 126:126 + 23 * 4]
-    pose_sim = compute_euclidean_similarity(user_pose, ref_pose)
+    # Kết hợp embedding và hand_sim
+    if embedding_sim is not None:
+        main_sim = embedding_sim * 0.7 + hand_sim * 0.3
+    else:
+        main_sim = hand_sim
 
-    user_face = user_seq[:, 126 + 23 * 4:]
-    ref_face = reference_seq[:, 126 + 23 * 4:]
-    face_sim = compute_euclidean_similarity(user_face, ref_face)
+    # Thưởng confidence nếu đúng nhãn
+    is_correct = (predicted_sign == expected_sign) and (expected_sign is not None)
+    if is_correct and confidence > 0:
+        main_sim = min(1.0, main_sim + confidence * 0.2)
 
-    # Handshape phải là thành phần chính
-    base_score = hand_sim * 0.90 + pose_sim * 0.07 + face_sim * 0.03
-
+    # Phạt nếu sai nhãn
     penalty = 1.0
     if predicted_sign and expected_sign and predicted_sign != expected_sign:
         penalty = 0.3
         logger.warning(f"[SCORING] Wrong sign ({predicted_sign} vs {expected_sign}), penalty x{penalty}")
 
-    final_score = max(0.0, min(100.0, base_score * penalty * 100))
+    final_score = max(0.0, min(100.0, main_sim * penalty * 100))
+
     return {
         "score": round(final_score, 2),
-        "hand_score": round(hand_sim * 100, 2),
-        "pose_score": round(pose_sim * 100, 2),
-        "face_score": round(face_sim * 100, 2),
+        "hand_score": round(hand_sim * 100, 2) if isinstance(hand_sim, float) else 0.0,
+        "pose_score": 0.0,
+        "face_score": 0.0,
         "penalty_applied": penalty < 1.0,
         "predicted_sign": predicted_sign,
         "expected_sign": expected_sign,

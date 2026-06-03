@@ -88,6 +88,16 @@ const CameraView: React.FC<CameraViewProps> = ({
       streamRef.current = stream;
       videoRef.current.srcObject = stream;
 
+      const track = stream.getVideoTracks()[0];
+      const settings = track.getSettings();
+
+      console.log('========== CAMERA SETTINGS ==========');
+      console.log('width      :', settings.width);
+      console.log('height     :', settings.height);
+      console.log('frameRate  :', settings.frameRate);
+      console.log('deviceId   :', settings.deviceId);
+      console.log('=====================================');
+
       await new Promise<void>((resolve, reject) => {
         if (!videoRef.current) return reject(new Error('No video element'));
         videoRef.current.onloadedmetadata = () => {

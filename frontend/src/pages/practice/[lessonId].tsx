@@ -8,6 +8,7 @@ import TopNav from '../../components/layout/TopNav';
 import { Lesson, ScoringResult } from '../../types/api';
 import { fetchLesson as fetchLessonApi, saveAttempt, scoreGesture } from '../../services/api/client';
 import { useAuth } from '../../contexts/AuthContext';
+import AICoachFeedback from '../../pages/practice/AICoachFeedback'; // đường dẫn tùy vị trí file
 
 const PracticeLesson: React.FC = () => {
   const router = useRouter();
@@ -18,13 +19,7 @@ const PracticeLesson: React.FC = () => {
   const [evaluation, setEvaluation] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const { user, isLoading } = useAuth();
-
-  useEffect(() => {
-  if (!isLoading && !user) {
-    router.push('/auth/login');
-  }
-  }, [user, isLoading]);
+  const { user } = useAuth();
 
   // Load lesson
   useEffect(() => {
@@ -78,11 +73,6 @@ const PracticeLesson: React.FC = () => {
       setKeypointBuffer([]);
     }
   };
-  if (isLoading || !user) {
-    return <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-      <div className="text-white">Checking authentication...</div>
-    </div>;
-  }
   if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center"><p>Loading...</p></div>;
   if (!lesson) return <div className="min-h-screen bg-slate-950 flex items-center justify-center"><p>Lesson not found</p></div>;
 
@@ -98,24 +88,27 @@ const PracticeLesson: React.FC = () => {
             <h2 className="text-3xl font-semibold">{lesson.title}</h2>
             <p className="text-white/50 mt-2">{lesson.description}</p>
           </div>
-          <Link href="/lessons" className="rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-sm hover:bg-white/10 transition">
-            Back to Lessons
-          </Link>
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
           {/* Cột trái: Camera + Video mẫu */}
           <section className="rounded-3xl border border-white/10 bg-white/5 p-6 shadow-2xl">
             <div className="flex justify-center mb-4">
-              { videoUrl ? (
-                <video
-                  src={videoUrl}
-                  autoPlay loop muted
-                  className="w-full max-w-xs rounded-xl border border-white/10"
-                  controls
-                />
+              {videoUrl ? (
+                <div className="relative mx-auto w-full max-w-[640px] aspect-[4/3]">
+                  <video
+                    src={videoUrl}
+                    autoPlay
+                    loop
+                    muted
+                    className="w-full h-full object-cover rounded-xl border border-white/10"
+                    controls
+                  />
+                </div>
               ) : (
-                <p className="text-white/40">No reference video available.</p>
+                <div className="relative mx-auto w-full max-w-[640px] aspect-[4/3] rounded-xl border border-white/10 bg-black/40 flex items-center justify-center">
+                  <p className="text-white/40">No reference video available.</p>
+                </div>
               )}
             </div>
             <CameraView
@@ -149,15 +142,33 @@ const PracticeLesson: React.FC = () => {
                     <span>Hand Similarity</span>
                     <span>{evaluation.hand_similarity.toFixed(1)}%</span>
                   </div>
-                    {Object.entries(evaluation.finger_details).map(([finger, info]: any) => (
+                  {Object.entries(evaluation.finger_details).map(([finger, info]: any) => {
+                    const simValue = info.similarity;
+                    let colorClass = 'text-red-400';
+                    if (simValue >= 0.9) colorClass = 'text-green-400';
+                    else if (simValue >= 0.75) colorClass = 'text-yellow-400';
+                    return (
                       <div key={finger} className="rounded-2xl bg-black/20 p-3 flex justify-between">
                         <span className="capitalize">{finger}</span>
-                        <span className={info.mean_distance < 0.05 ? 'text-green-400' : info.mean_distance < 0.1 ? 'text-yellow-400' : 'text-red-400'}>
-                          {info.similarity.toFixed(2)} - {info.suggestion} (dist: {info.mean_distance?.toFixed(3)})
+                        <span className={colorClass}>
+                          {(simValue * 100).toFixed(0)}% - {info.suggestion}
                         </span>
                       </div>
-                    ))}
+                    );
+                  })}
                 </div>
+                {/* AI Coach Feedback */}
+                {user && evaluation && (
+                  <AICoachFeedback
+                    userId={user.id}
+                    score={evaluation.score}
+                    handSimilarity={evaluation.hand_similarity / 100}
+                    motionScore={0.7}               // hoặc tính từ dữ liệu thực (nếu có)
+                    bodyScore={0.8}                 // tạm thời giá trị mẫu
+                    sign={lesson.reference_sign?.toUpperCase() || 'A'}
+                    fingerDetails={evaluation.finger_details}
+                  />
+                )}
               </>
             ) : (
               <div className="rounded-2xl border border-dashed border-white/10 p-10 text-center text-white/40">

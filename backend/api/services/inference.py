@@ -7,12 +7,14 @@ import numpy as np
 
 try:
     from tensorflow.keras.models import load_model as keras_load_model
+    from tensorflow.keras.models import Model
     KERAS_AVAILABLE = True
 except ImportError:
     KERAS_AVAILABLE = False
     keras_load_model = None
 
 from config import (
+    FEATURE_SIZE,
     MODEL_PATH,
     ACTIONS_META_PATH,
     SCALER_PATH,
@@ -23,6 +25,7 @@ from config import (
     RIGHT_HAND_START,
     RIGHT_HAND_END,
 )
+from ml.hand_utils import detect_active_hands
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +72,7 @@ def normalize_relative_hand(sequence: np.ndarray) -> np.ndarray:
 
 
 class PredictionSmoother:
-    def __init__(self, window_size: int = 2, threshold: float = 0.5):
+    def __init__(self, window_size: int = 4, threshold: float = 0.7):
         self.window_size = window_size
         self.threshold = threshold
         self.history: List[Tuple[int, float]] = []
@@ -104,7 +107,7 @@ class InferenceService:
     def __init__(self) -> None:
         self.keras_model: Any = None
         self.keras_labels: List[str] = []
-        self.smoother = PredictionSmoother(window_size=2, threshold=0.5)
+        self.smoother = PredictionSmoother(window_size=4, threshold=0.7)
         self.scaler_params: Dict[str, Any] = None
         self.keras_model_path: Path = Path(MODEL_PATH)
 
@@ -162,7 +165,46 @@ class InferenceService:
 
         abs_max = np.where(abs_max == 0, 1.0, abs_max)
         return (seq_flat / abs_max).reshape(seq.shape)
+    
+    def get_embedding(self, keypoints_sequence: List[List[float]]) -> Optional[np.ndarray]:
+        if not self.keras_model:
+            self.load_keras_model()
+        if not self.keras_model:
+            return None
 
+        seq = np.array(keypoints_sequence, dtype=np.float32)
+        if seq.shape[0] != 30:
+            if seq.shape[0] < 30:
+                pad = np.zeros((30 - seq.shape[0], seq.shape[1]), dtype=np.float32)
+                seq = np.vstack([seq, pad])
+            else:
+                seq = seq[:30]
+
+        seq = normalize_relative_hand(seq)
+        seq = self.normalize_sequence(seq)
+        seq = np.expand_dims(seq, axis=0)
+
+        # Lấy output tầng Dense(32) (index 2)
+        from tensorflow.keras.layers import Input
+        from tensorflow.keras.models import Model as KModel
+
+        inp = Input(shape=(30, FEATURE_SIZE))
+        x = self.keras_model.layers[0](inp)
+        x = self.keras_model.layers[1](x)
+        x = self.keras_model.layers[2](x)
+        embedding_model = self._create_embedding_model()
+        emb = embedding_model.predict(seq, verbose=0)[0]
+        return emb
+    
+    def _create_embedding_model(self):
+        from tensorflow.keras.layers import Input
+        from tensorflow.keras.models import Model as KModel
+        inp = Input(shape=(30, FEATURE_SIZE))
+        x = self.keras_model.layers[0](inp)
+        x = self.keras_model.layers[1](x)
+        x = self.keras_model.layers[2](x)
+        return KModel(inputs=inp, outputs=x)
+    
     def predict_keras(self, keypoints_sequence: List[List[float]]) -> Dict[str, Any]:
         if not self.keras_model:
             self.load_keras_model()
@@ -179,6 +221,10 @@ class InferenceService:
 
         seq = normalize_relative_hand(seq)
         seq = self.normalize_sequence(seq)
+        has_left, has_right = detect_active_hands(seq)
+        if not has_left and not has_right:
+            logger.info("No hands detected, returning unknown")
+            return {"sign": "unknown", "confidence": 0.0, "stable": False}
 
         seq = np.expand_dims(seq, axis=0)
         preds = self.keras_model.predict(seq, verbose=0)[0]

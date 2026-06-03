@@ -14,6 +14,7 @@ try:
     from tensorflow.keras.optimizers import Adam
     from tensorflow.keras.callbacks import Callback, EarlyStopping
     from tensorflow.keras.regularizers import L2
+    from tensorflow.keras.models import Model
     KERAS_AVAILABLE = True
 except ImportError:
     KERAS_AVAILABLE = False
@@ -415,6 +416,23 @@ class HolisticTrainer:
         best_idx = np.argmin(total_dist)
         return sequences[best_idx]
 
+    def predict_embedding(self, sequence: np.ndarray) -> np.ndarray:
+        """Trích xuất vector 32 chiều từ tầng Dense áp chót"""
+        if self.model is None:
+            raise ValueError("Model not loaded")
+
+        from tensorflow.keras.layers import Input
+        from tensorflow.keras.models import Model as KModel
+
+        # Tạo embedding model an toàn, không cần model.inputs
+        inp = Input(shape=(SEQUENCE_LENGTH, FEATURE_SIZE))
+        x = self.model.layers[0](inp)   # LSTM
+        x = self.model.layers[1](x)     # Dropout
+        x = self.model.layers[2](x)     # Dense(32)
+        embedding_model = KModel(inputs=inp, outputs=x)
+
+        return embedding_model.predict(np.expand_dims(sequence, axis=0), verbose=0)[0]
+
     def save_reference_sequences(self, X: np.ndarray, y: np.ndarray):
         try:
             from ml.hand_utils import detect_active_hands, detect_hand_activity_per_frame
@@ -481,6 +499,14 @@ class HolisticTrainer:
                 np.save(os.path.join(ref_dir, f"ref_{action}_both.npy"), both_medoid)
                 logger.info(f"[REF] Saved ref_{action}_both.npy ({len(both_seqs)} sequences)")
 
+            for hand in ["left", "right", "both"]:
+                ref_path = os.path.join(ref_dir, f"ref_{action}_{hand}.npy")
+                if os.path.exists(ref_path):
+                    ref_seq = np.load(ref_path)
+                    emb = self.predict_embedding(ref_seq)
+                    np.save(os.path.join(ref_dir, f"ref_{action}_{hand}_embed.npy"), emb)
+                    logger.info(f"[REF] Saved embedding for ref_{action}_{hand}.npy")
+
             if action == "LOVE":
                 logger.info(
                     f"[REF] LOVE summary: both={len(both_seqs)} "
@@ -494,6 +520,7 @@ class HolisticTrainer:
 
             if len(left_seqs) == 0 and len(right_seqs) == 0 and len(both_seqs) == 0:
                 logger.warning(f"[REF] No hand-specific sequences found for action {action}")
+
 
     def predict(self, sequence: np.ndarray):
         if self.model is None:

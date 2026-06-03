@@ -6,15 +6,20 @@ Tạo user demo với mật khẩu mặc định.
 
 import sys
 import os
+import bcrypt
+
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from sqlalchemy.orm import sessionmaker
 from db.models import Sign, engine
 from db.repository import create_lesson, create_sign, create_user, get_user_by_username
 from config import ACTIONS
-from api.services.auth import get_password_hash   # để hash password
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+def get_password_hash(password: str) -> str:
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
 
 
 def seed_database():
@@ -26,7 +31,13 @@ def seed_database():
         user = get_user_by_username(db, username)
         if not user:
             hashed = get_password_hash(password)
-            user = create_user(db, username=username, hashed_password=hashed)
+            # create_user cần email, ta dùng email giả
+            user = create_user(
+                db,
+                email="demo_user@example.com",
+                hashed_password=hashed,
+                username=username
+            )
             print(f"Created user: {user.username} (password: {password})")
         else:
             print(f"Using existing user: {user.username}")
@@ -39,7 +50,12 @@ def seed_database():
                 else f"Gesture for {action}"
             )
 
-            # Tạo sign với difficulty = 1
+            # Tạo sign (nếu chưa tồn tại – tránh trùng lặp)
+            existing_sign = db.query(Sign).filter(Sign.name == action).first()
+            if existing_sign:
+                print(f"Sign {action} already exists, skipping.")
+                continue
+
             sign = create_sign(db, name=action, description=description, difficulty_level=1)
             print(f"Created sign: {sign.name} (id={sign.id})")
 

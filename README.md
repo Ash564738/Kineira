@@ -91,7 +91,7 @@ text
 - **FastAPI** (Python)
 - **TensorFlow / Keras** – LSTM
 - **NumPy** – xử lý vector
-- **SQLAlchemy** – ORM (SQLite/phát triển)
+- **SQLAlchemy** – ORM (PostgreSQL mặc định, cấu hình qua DATABASE_URL)
 
 ### Dữ liệu & Mô hình
 - `holistic_landmarker.task` – MediaPipe
@@ -169,7 +169,7 @@ text
 ```bash
 cd backend
 python -m venv venv
-source venv/bin/activate   # Windows: .\venv\Scripts\Activate.ps1
+.\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 python db/models.py
 python db/seed.py

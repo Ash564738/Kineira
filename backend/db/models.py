@@ -3,7 +3,7 @@ from datetime import datetime
 import os
 
 from dotenv import load_dotenv
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text, create_engine
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text, Boolean, create_engine
 from sqlalchemy.orm import declarative_base, relationship
 
 load_dotenv()
@@ -15,12 +15,39 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True)
-    username = Column(String(50), unique=True, nullable=False)
-    hashed_password = Column(String(128), nullable=False)
+    email = Column(String(120), unique=True, nullable=False)
+    username = Column(String(50), unique=True, nullable=True)
+    hashed_password = Column(String(255), nullable=True)
+    google_id = Column(String(255), unique=True, nullable=True)
+    avatar_url = Column(String(500), nullable=True)
+    email_verified = Column(Boolean, default=False)
+    verification_token = Column(String(255), nullable=True)
+    password_reset_token = Column(String(255), nullable=True)
+    reset_token_expires = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    xp = Column(Integer, default=0)
+    level = Column(Integer, default=1)
+    streak = Column(Integer, default=0)
+    last_practice_date = Column(DateTime, nullable=True)
 
     attempts = relationship("Attempt", back_populates="user")
     progress = relationship("Progress", back_populates="user")
+    achievements = relationship("Achievement", back_populates="user")
+
+
+class Achievement(Base):
+    __tablename__ = "achievements"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    achievement_type = Column(String(50), nullable=False)
+    title = Column(String(100), nullable=False)
+    description = Column(Text)
+    icon = Column(String(50))
+    earned_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="achievements")
 
 
 class Sign(Base):
