@@ -1,248 +1,480 @@
-# Kineira – Nền tảng học Ngôn ngữ Ký hiệu bằng AI
+# Kineira
 
-Nền tảng EdTech toàn diện giúp học ngôn ngữ ký hiệu thông qua thị giác máy tính và trí tuệ nhân tạo.
-Sử dụng **MediaPipe Holistic** để theo dõi chuyển động tay, khuôn mặt và tư thế theo thời gian thực, kết hợp mô hình **LSTM** để nhận dạng và chấm điểm cử chỉ.
+AI-powered sign language learning platform built with Next.js, FastAPI, MediaPipe Holistic, and TensorFlow.
 
-## Tính năng chính
+Kineira helps users learn sign language through real-time gesture recognition, AI-assisted practice, structured lessons, quizzes, and progress tracking.
 
-- **Theo dõi toàn diện (Holistic)**: MediaPipe Holistic trích xuất 329 đặc trưng mỗi khung hình (tay trái, tay phải, tư thế thân trên, khuôn mặt).
-- **Thu thập dữ liệu thông minh**: Giao diện web cho phép thu thập **100 video × 30 khung hình** cho mỗi ký hiệu, với chế độ nghỉ giữa các video và chuyển tay (50 video tay trái, 50 video tay phải).
-- **Huấn luyện tự động**: Huấn luyện mô hình LSTM chỉ bằng một nút bấm – không cần chạy script thủ công.
-- **Dịch cử chỉ thời gian thực**: Nhận dạng ký hiệu ngay khi bạn thực hiện trước camera.
-- **Bài học tương tác**: Luyện tập từng ký hiệu với phản hồi chi tiết.
-- **Chấm điểm thông minh**: Điểm số dựa trên độ tương đồng của tay (80%), tư thế (15%) và khuôn mặt (5%), tự động xác định tay đang sử dụng.
-- **Theo dõi tiến độ**: Bảng điều khiển hiển thị quá trình học tập.
+---
 
-## Kiến trúc hệ thống
+## Overview
 
-### Các trang chính (Frontend)
+Kineira is a full-stack EdTech application that combines computer vision and deep learning to recognize sign language gestures and provide detailed feedback during practice sessions.
 
-1. **Translate (index.tsx)** – Nhận dạng ký hiệu thời gian thực  
-   - Gửi chuỗi 30 khung hình đến `/translate`.
-2. **Lessons (lessons.tsx)** – Danh mục bài học theo độ khó.
-3. **Lesson Practice ([lessonId].tsx)** – Luyện tập một ký hiệu  
-   - Ghi lại 30 khung hình, gửi lên `/score` để so sánh với cử chỉ mẫu.
-4. **Collect (collect.tsx)** – Thu thập dữ liệu huấn luyện  
-   - Hỗ trợ nghỉ giữa video, chuyển tay, làm lại video lỗi.
-5. **Progress (progress.tsx)** – Bảng theo dõi tiến độ người dùng.
+The platform uses MediaPipe Holistic for landmark extraction and an LSTM neural network for gesture classification and scoring.
 
-### Luồng dữ liệu chính
+---
 
-#### Thu thập dữ liệu & Huấn luyện
-Vào Collect → chọn ký hiệu (A, B, HELLO, LOVE).
+## Key Features
 
-Hệ thống yêu cầu thực hiện 50 video tay trái, sau đó đổi tay 50 video tay phải.
+### Real-Time Sign Recognition
 
-Mỗi video gồm 30 khung hình, mỗi khung là vector 329 chiều.
+* Live sign language recognition using a webcam
+* Continuous gesture prediction
+* Confidence scoring for each prediction
 
-Dữ liệu lưu vào datasets/MP_Data/{action}/{video_num}/*.npy.
+### Interactive Learning
 
-Nhấn "Start Training" → Backend tự động:
+* Structured lessons organized by difficulty
+* Guided practice sessions
+* Instant feedback on user performance
 
-Chuẩn hóa tọa độ tay về gốc cổ tay (relative normalization)
+### AI-Based Scoring
 
-Tăng cường dữ liệu (nhiễu Gaussian, biến dạng thời gian)
+* Hand similarity analysis
+* Pose similarity analysis
+* Facial expression analysis
+* Finger-level feedback and improvement suggestions
 
-Chuẩn hóa max‑abs scaling
+### Data Collection
 
-Huấn luyện LSTM 64 units, 2000 epoch với EarlyStopping
+* Guided recording workflow
+* Automatic validation and retries
+* Left-hand and right-hand data collection support
 
-Lưu model và file tham chiếu (ref_{action}_{hand}.npy) vào assets/models/
+### Model Training
 
-text
+* Train gesture recognition models directly from the web interface
+* Progress tracking during training
+* Automatic preprocessing and augmentation
 
-#### Dịch cử chỉ (Inference)
-Camera ghi nhận 329 keypoints/khung.
+### User Engagement
 
-Mỗi 0.5 giây gửi 30 khung hình đến /translate.
+* Progress dashboard
+* Leaderboard system
+* Daily challenges
+* Quiz mode
+* XP and streak tracking
 
-Backend: relative hand → max‑abs scale → LSTM dự đoán → smoother.
+### User Experience
 
-Trả về ký hiệu và độ tin cậy.
+* Responsive interface
+* Light and dark themes
+* Consistent design system
 
-text
+---
 
-#### Luyện tập & Chấm điểm
-Người dùng chọn bài học → thực hiện ký hiệu.
+## Screenshots
 
-Gửi chuỗi 30 khung hình lên /score kèm target_sign.
+### Translate
 
-Backend xác định tay đang dùng (trái/phải), tải reference tương ứng.
+![Translate](./assets/images/translate.png)
 
-Chuẩn hóa user sequence giống hệt pipeline huấn luyện.
+### Lessons
 
-Tính điểm: cosine similarity tay (80%) + tư thế (15%) + mặt (5%).
+![Lessons](./assets/images/lessons.png)
 
-Nếu ký hiệu dự đoán khác target → phạt ×0.3.
+### Practice
 
-Trả về điểm tổng, phản hồi, độ tương đồng từng ngón tay.
+![Practice](./assets/images/practice.png)
 
-text
+### Data Collection
 
-## Công nghệ sử dụng
+![Collect](./assets/images/collect.png)
+
+### Quiz
+
+![Quiz](./assets/images/quiz.png)
+
+### Progress Dashboard
+
+![Progress](./assets/images/progress.png)
+
+### Profile
+
+![Profile](./assets/images/profile.png)
+
+### Sign In
+
+![Sign In](./assets/images/signin.png)
+
+### Sign Up
+
+![Sign Up](./assets/images/signup.png)
+
+---
+
+## System Architecture
+
+### Frontend Pages
+
+| Page      | Description                          |
+| --------- | ------------------------------------ |
+| Translate | Real-time sign recognition           |
+| Lessons   | Browse learning content              |
+| Practice  | Record and evaluate gestures         |
+| Quiz      | Knowledge testing                    |
+| Progress  | Statistics and analytics             |
+| Collect   | Dataset creation                     |
+| Profile   | User settings and account management |
+
+---
+
+## Data Flow
+
+### Data Collection and Training
+
+1. Select a sign from the Collect page.
+2. Record gesture videos following the guided workflow.
+3. Store extracted landmark data as NumPy arrays.
+4. Preprocess and augment collected samples.
+5. Train the LSTM model.
+6. Save trained models and reference sequences.
+
+Dataset location:
+
+```text
+datasets/MP_Data/{action}/{video_num}/*.npy
+```
+
+Model output location:
+
+```text
+assets/models/
+```
+
+### Translation Pipeline
+
+1. Camera captures landmark data.
+2. A sequence of 30 frames is generated.
+3. The sequence is sent to the backend.
+4. Data is normalized and scaled.
+5. The LSTM model predicts the gesture.
+6. Temporal smoothing improves stability.
+7. Prediction and confidence score are returned.
+
+### Practice and Scoring Pipeline
+
+1. User performs a target gesture.
+2. A 30-frame sequence is submitted.
+3. Reference samples are loaded.
+4. Similarity metrics are calculated.
+5. Final score and feedback are generated.
+6. Finger-level suggestions are returned.
+
+---
+
+## Technology Stack
 
 ### Frontend
-- **Next.js 14** + TypeScript
-- **TailwindCSS**
-- **MediaPipe Holistic** (client‑side)
-- **React** hooks & refs
+
+* Next.js 14
+* React
+* TypeScript
+* Tailwind CSS
+* React Context API
 
 ### Backend
-- **FastAPI** (Python)
-- **TensorFlow / Keras** – LSTM
-- **NumPy** – xử lý vector
-- **SQLAlchemy** – ORM (PostgreSQL mặc định, cấu hình qua DATABASE_URL)
 
-### Dữ liệu & Mô hình
-- `holistic_landmarker.task` – MediaPipe
-- `action.h5` – Mô hình LSTM đã huấn luyện
-- `scaler.json` – Tham số max‑abs scaling
-- `ref_{action}_{hand}.npy` – Các chuỗi tham chiếu
+* FastAPI
+* SQLAlchemy
+* PostgreSQL
+* NumPy
+* Scikit-learn
 
-## Cấu trúc thư mục
-├── backend/
-│ ├── api/
-│ │ ├── routers/
-│ │ │ ├── data_collection.py
-│ │ │ ├── lessons.py
-│ │ │ ├── progress.py
-│ │ │ ├── recognition.py
-│ │ │ └── training.py
-│ │ ├── schemas/
-│ │ │ └── common.py
-│ │ ├── services/
-│ │ │ ├── inference.py
-│ │ │ └── scoring.py
-│ │ └── main.py
-│ ├── assets/models/ # Mô hình & tham chiếu
-│ ├── datasets/MP_Data/ # Dữ liệu huấn luyện thu thập
-│ ├── db/ # Models & seed
-│ ├── ml/
-│ │ ├── train_holistic.py
-│ │ ├── hand_utils.py
-│ │ └── data_collection.py
-│ └── config.py
-├── frontend/
-│ └── src/
-│ ├── components/
-│ ├── lib/landmarks/
-│ ├── pages/
-│ ├── services/api/
-│ └── types/
+### Machine Learning
+
+* TensorFlow
+* Keras
+* MediaPipe Holistic
+* LSTM Networks
+
+---
+
+## Project Structure
+
+```text
+Kineira
+├── backend
+│   ├── api
+│   │   ├── routers
+│   │   └── services
+│   ├── assets
+│   │   └── models
+│   ├── datasets
+│   ├── db
+│   ├── ml
+│   ├── config.py
+│   └── main.py
+│
+├── frontend
+│   ├── src
+│   │   ├── components
+│   │   ├── contexts
+│   │   ├── lib
+│   │   ├── pages
+│   │   ├── services
+│   │   ├── styles
+│   │   └── types
+│   ├── .env.local
+│   └── package.json
+│
 └── README.md
+```
 
-text
+---
+
+## Installation
+
+### Backend
+
+```bash
+cd backend
+
+python -m venv venv
+
+# Linux / macOS
+source venv/bin/activate
+
+# Windows
+venv\Scripts\activate
+
+pip install -r requirements.txt
+
+python db/models.py
+python db/seed.py
+
+python main.py
+```
+
+Backend runs at:
+
+```text
+http://localhost:8000
+```
+
+### Frontend
+
+```bash
+cd frontend
+
+npm install
+
+npm run dev
+```
+
+Frontend runs at:
+
+```text
+http://localhost:3000
+```
+
+---
+
+## Usage
+
+### Collect Training Data
+
+1. Open the Collect page.
+2. Select a gesture.
+3. Follow the recording instructions.
+4. Complete all required recordings.
+
+### Train the Model
+
+1. Navigate to Collect.
+2. Click Start Training.
+3. Wait for training completion.
+
+### Translate Signs
+
+1. Open the Translate page.
+2. Allow camera access.
+3. Perform a gesture.
+4. View prediction results in real time.
+
+### Practice Lessons
+
+1. Open a lesson.
+2. Record a gesture attempt.
+3. Review score and feedback.
+
+### Take Quizzes
+
+1. Open Quiz mode.
+2. Answer gesture-related questions.
+3. Earn XP and maintain streaks.
+
+### Track Progress
+
+1. Open the Progress page.
+2. Review statistics and rankings.
+3. Monitor learning history.
+
+---
 
 ## API Endpoints
 
-### Dịch
-- **POST /translate**  
-  Body: `{ "keypoints_sequence": number[][] }` (30×329)  
-  Response: `{ "sign": string, "confidence": number }`
+### Translation
 
-### Chấm điểm
-- **POST /score**  
-  Body: `{ "user_sequence": number[][], "target_sign": string }`  
-  Response: `{ "score": float, "feedback": string, "hand_similarity": float, "finger_details": {...} }`
+```http
+POST /translate
+```
 
-### Thu thập dữ liệu
-- **GET /data-collection/actions** – Danh sách ký hiệu
-- **GET /data-collection/status** – Tiến độ tất cả
-- **POST /data-collection/start/{action}/{video_num}?overwrite=true** – Bắt đầu video
-- **POST /data-collection/frame-vector/{action}/{video_num}** – Lưu batch frame
-- **DELETE /data-collection/video/{action}/{video_num}** – Xoá video lỗi
-- **GET /data-collection/next-video/{action}** – Số video kế tiếp
+Submit a gesture sequence and receive a predicted sign and confidence score.
 
-### Huấn luyện
-- **POST /training/start** – Bắt đầu huấn luyện
-- **GET /training/status** – Trạng thái (epoch, loss, accuracy)
-- **POST /training/cancel**
+### Scoring
 
-### Bài học & Tiến độ
-- **GET /lessons**
-- **GET /lessons/{id}**
-- **POST /users/{id}/progress** – Lưu kết quả luyện tập
+```http
+POST /score
+```
 
-## Hướng dẫn cài đặt
+Evaluate a user gesture against a target sign.
 
-### Backend
-```bash
-cd backend
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python db/models.py
-python db/seed.py
-python main.py             # http://localhost:8000
-Frontend
-bash
-cd frontend
-npm install
-npm run dev                # http://localhost:3000
-Quy trình sử dụng
-Thu thập dữ liệu (bắt buộc lần đầu)
-Vào Collect, chọn ký hiệu → hệ thống hướng dẫn thực hiện 50 video tay trái, nghỉ, 50 video tay phải. Video lỗi sẽ được yêu cầu quay lại.
+### Data Collection
 
-Huấn luyện mô hình
-Nhấn Start Training trên trang Collect → chờ vài phút. Model được lưu tự động.
+```http
+GET    /data-collection/actions
+GET    /data-collection/status
+GET    /data-collection/next-video/{action}
 
-Dịch cử chỉ
-Vào Translate, thực hiện ký hiệu trước camera, kết quả hiển thị ngay.
+POST   /data-collection/start/{action}/{video_num}
+POST   /data-collection/frame-vector/{action}/{video_num}
 
-Luyện tập & Chấm điểm
-Vào Lessons → chọn bài → thực hiện ký hiệu → nhận điểm, phản hồi và gợi ý cải thiện từng ngón tay.
+DELETE /data-collection/video/{action}/{video_num}
+```
 
-Theo dõi tiến độ
-Xem lịch sử luyện tập và điểm số cao nhất trong Progress.
+### Training
 
-Chi tiết huấn luyện
-Dữ liệu: 100 video × 30 frame cho mỗi action (tổng 400 video gốc, sau augmentation ×3).
+```http
+POST /training/start
+GET  /training/status
+POST /training/cancel
+```
 
-Tiền xử lý:
+### Lessons
 
-Chuẩn hóa tay về gốc cổ tay (wrist‑centric).
-Augmentation: Gaussian noise (std=0.02), time warping (max 10%).
-Max‑abs scaling (lưu scaler chỉ từ tập huấn luyện, không ghi đè khi tạo reference).
-Kiến trúc LSTM:
+```http
+GET /lessons
+GET /lessons/{id}
+```
 
-LSTM(64) → Dropout(0.3) → Dense(32) → Dropout(0.3) → Softmax
+### Progress
 
-Optimizer: Adam(lr=0.0003), clipnorm=1.0, L2=0.001
+```http
+POST /users/{id}/progress
+```
 
-EarlyStopping: val_loss, patience=10
+Additional endpoints may be available for authentication, quizzes, statistics, daily challenges, and leaderboard functionality.
 
-Kết quả: độ chính xác trên tập test ~95‑100% (tùy chất lượng dữ liệu).
+---
 
-Hệ thống chấm điểm
-Công thức:
-hand_similarity = cosine_sim(user_hand, ref_hand)
-pose_similarity = cosine_sim(user_pose, ref_pose)
-face_similarity = cosine_sim(user_face, ref_face)
-base_score = hand × 0.80 + pose × 0.15 + face × 0.05
-Nếu dự đoán ≠ target → penalty = 0.3.
-final_score = max(0, base_score × penalty) × 100
+## Machine Learning Pipeline
 
-Phân tích ngón tay: cosine similarity riêng cho từng ngón (thumb, index, middle, ring, pinky) cùng gợi ý cải thiện.
+### Dataset
 
-Cấu hình quan trọng (config.py)
-python
-ACTIONS = ["A", "B", "HELLO", "LOVE"]
+* 100 videos per gesture
+* 30 frames per video
+* Augmented dataset generation
+
+### Preprocessing
+
+* Wrist-relative hand normalization
+* Gaussian noise augmentation
+* Time-warp augmentation
+* Max-absolute scaling
+
+### Model Architecture
+
+```text
+LSTM(64)
+↓
+Dropout(0.3)
+↓
+Dense(32)
+↓
+Dropout(0.3)
+↓
+Softmax
+```
+
+### Training Configuration
+
+```text
+Optimizer: Adam
+Learning Rate: 0.0003
+Clip Norm: 1.0
+L2 Regularization: 0.001
+Early Stopping Patience: 10
+```
+
+### Performance
+
+Typical validation accuracy ranges from 95% to 100% when trained with clean and balanced datasets.
+
+---
+
+## Scoring System
+
+```text
+hand_similarity = cosine_similarity(user_hand, reference_hand)
+
+pose_similarity = cosine_similarity(user_pose, reference_pose)
+
+face_similarity = cosine_similarity(user_face, reference_face)
+
+base_score =
+    hand_similarity * 0.80 +
+    pose_similarity * 0.15 +
+    face_similarity * 0.05
+
+final_score = base_score * penalty
+```
+
+Penalty is applied when the predicted gesture does not match the expected target gesture.
+
+Additional finger-level similarity analysis is performed for:
+
+* Thumb
+* Index Finger
+* Middle Finger
+* Ring Finger
+* Pinky Finger
+
+---
+
+## Configuration
+
+Main configuration values are located in:
+
+```text
+backend/config.py
+```
+
+Example:
+
+```python
+ACTIONS = ["A", "B", "HELLO", "LOVE", "ME", "YOU", "EAT"]
+
 VIDEOS_PER_ACTION = 100
 FRAMES_PER_VIDEO = 30
+
 N_HAND = 21
 N_POSE = 23
 N_FACE = 37
-FEATURE_SIZE = 329  # 63+63+92+111
+
+FEATURE_SIZE = 329
+
 LSTM_EPOCHS = 2000
 LSTM_BATCH_SIZE = 32
+
 SEQUENCE_LENGTH = 30
-Xử lý sự cố
-Model không tải được: Kiểm tra assets/models/action.h5 và scaler.json.
+```
 
-Huấn luyện thất bại: Đảm bảo mỗi action có đủ 100 video, không thiếu frame.
+## Acknowledgements
 
-Điểm thấp / âm: Đảm bảo cả inference và scoring đều áp dụng normalize_relative_hand.
-
-Không phát hiện tay: Cải thiện ánh sáng, đảm bảo camera thấy toàn bộ thân trên.
-
-Thiếu reference: Mỗi action cần có ít nhất một file ref_{action}_left.npy, ref_{action}_right.npy hoặc ref_{action}_both.npy.
+* MediaPipe
+* TensorFlow
+* FastAPI
+* Next.js
+* PostgreSQL
+* Tailwind CSS
