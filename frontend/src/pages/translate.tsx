@@ -1,11 +1,22 @@
-// src/pages/index.tsx
+// src/pages/translate.tsx
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import CameraView from "../components/camera/CameraView";
 import TopNav from "../components/layout/TopNav";
-import { FRAMES_PER_VIDEO, FEATURE_SIZE, FrameSample } from "../types/landmarks";
+import Button from "../components/layout/Button";
+import { FEATURE_SIZE, FrameSample } from "../types/landmarks";
 import { resetTranslate } from "@/services/api/client";
+import {
+  Brain,
+  MessageSquare,
+  AlertTriangle,
+  CheckCircle2,
+  Loader2,
+  Activity,
+} from "lucide-react";
+import { useTheme } from "../contexts/ThemeContext";
+import { themeColors, typography, spacing, borderRadius, effects } from "../styles/theme";
 
-const WINDOW_SIZE = 30;      // số frame mỗi lần gửi
+const WINDOW_SIZE = 30;
 
 const log = {
   info: (msg: string, data?: any) => console.log(`[TRANSLATE_PAGE] INFO: ${msg}`, data || ''),
@@ -15,6 +26,9 @@ const log = {
 };
 
 const Translate: React.FC = () => {
+  const { theme } = useTheme();
+  const palette = themeColors[theme];
+
   const [isTranslating, setIsTranslating] = useState(false);
   const [prediction, setPrediction] = useState("");
   const [confidence, setConfidence] = useState(0.0);
@@ -22,17 +36,15 @@ const Translate: React.FC = () => {
   const [sentence, setSentence] = useState("");
 
   const isTranslatingRef = useRef(false);
-  const frameBufferRef = useRef<number[][]>([]);   // buffer lớn
-  const processingRef = useRef(false);              // tránh gọi API chồng lấn
-  const lastSentIndex = useRef(0);                  // vị trí cuối cùng đã gửi
+  const frameBufferRef = useRef<number[][]>([]);
+  const processingRef = useRef(false);
+  const [readyToSign, setReadyToSign] = useState(false);
 
   useEffect(() => {
     isTranslatingRef.current = isTranslating;
-    log.info(`Translation mode ${isTranslating ? 'ENABLED' : 'DISABLED'}`);
     if (isTranslating) {
       frameBufferRef.current = [];
       processingRef.current = false;
-      lastSentIndex.current = 0;
     }
   }, [isTranslating]);
 
@@ -44,16 +56,12 @@ const Translate: React.FC = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ keypoints_sequence: sequence })
       });
-
       if (!res.ok) throw new Error(`API error ${res.status}`);
-
       const data = await res.json();
       if (data.sentence) {
         setSentence(data.sentence);
       }
-
       log.info(`Translation result: sign='${data.sign}', confidence=${data.confidence.toFixed(4)}`);
-
       if (data.sign === "unknown") {
         setPrediction("unknown");
         setConfidence(0);
@@ -72,45 +80,38 @@ const Translate: React.FC = () => {
   };
 
   const handleFrameDetected = useCallback((sample: FrameSample) => {
+    if (!readyToSign) {
+      frameBufferRef.current.push([...sample.keypoints]);
+      if (frameBufferRef.current.length >= WINDOW_SIZE) {
+        setReadyToSign(true);
+      }
+      return;
+    }
     if (!isTranslatingRef.current) return;
-
     if (sample.keypoints.length !== FEATURE_SIZE) {
       log.debug(`Invalid frame - keypoints length: ${sample.keypoints.length}`);
       return;
     }
-
-    // Thêm frame mới vào buffer
     frameBufferRef.current.push([...sample.keypoints]);
-
-    // Chỉ bắt đầu gửi khi buffer đủ WINDOW_SIZE
     if (frameBufferRef.current.length < WINDOW_SIZE) return;
-
-    // Nếu đang xử lý request trước, bỏ qua (tránh nghẽn)
     if (processingRef.current) return;
-
     processingRef.current = true;
-
     const buffer = frameBufferRef.current;
-    // Lấy cửa sổ mới nhất
     const window = buffer.slice(-WINDOW_SIZE);
-
-    // Gửi request
     translateWindow(window).finally(() => {
       processingRef.current = false;
     });
-
-    // (Tùy chọn) Xoá bớt frame cũ để tiết kiệm bộ nhớ
-    // Giữ tối đa 60 frame
     if (buffer.length > 60) {
       frameBufferRef.current = buffer.slice(-60);
     }
-  }, []);
+  }, [readyToSign]);
 
   const startTranslation = async () => {
     setPrediction("");
     setConfidence(0.0);
     setError("");
     setSentence("");
+    setReadyToSign(false);
     try {
       await resetTranslate();
     } catch (e) {
@@ -125,66 +126,125 @@ const Translate: React.FC = () => {
     processingRef.current = false;
   };
 
+  // ---------- JSX ----------
   return (
-    <div className="min-h-screen bg-slate-950 text-white">
+    <div className={`min-h-screen ${palette.pageBg} ${typography.fontFamily}`}>
       <TopNav active="translate" />
-      <main className="max-w-4xl mx-auto px-6 py-8">
-        <h1 className="text-2xl font-semibold mb-6">Translate Sign Language</h1>
+      <main className={`${spacing.container} !pt-6`}>
+        {/* Tiêu đề chính */}
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-10">
+          <div>
+            <h1 className={`${typography.heading.pageTitle} ${palette.textPrimary}`}>
+              Translate Sign Language
+            </h1>
+            <p className={`${palette.textMuted} mt-2`}>
+              Translate sign language gestures into text in real-time.
+            </p>
+          </div>
+        </div>
 
-        <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-5">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-medium">Camera</h2>
-            <div className="text-sm text-white/60">
-              {isTranslating ? "Translating..." : "Ready"}
+        {/* Layout 2 cột */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* Cột camera bên trái */}
+          <div className="lg:col-span-7 space-y-5">
+            <div className={`${borderRadius.card} border ${palette.cardBorder} ${palette.cardBg} ${spacing.cardPadding}`}>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className={`${typography.heading.cardTitle} ${palette.textPrimary} flex items-center gap-2`}>
+                  Camera
+                </h2>
+                <div className="flex items-center gap-2">
+                  {isTranslating ? (
+                    readyToSign ? (
+                      <>
+                        <CheckCircle2 size={16} className={palette.textPrimary} />
+                        <span className={`text-sm font-medium ${palette.textPrimary}`}>Ready</span>
+                      </>
+                    ) : (
+                      <>
+                        <Loader2 size={16} className={`animate-spin ${palette.infoText}`} />
+                        <span className={`text-sm font-medium ${palette.textMuted}`}>Warming up...</span>
+                      </>
+                    )
+                  ) : (
+                    <>
+                      <Activity size={16} className={palette.textMuted} />
+                      <span className={`text-sm ${palette.textMuted}`}>Idle</span>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Camera View – tỉ lệ 4:3 được CameraView tự quyết định */}
+              <div className={`w-full overflow-hidden ${borderRadius.button} ${palette.cameraBg}`}>
+                <CameraView
+                  isRecording={isTranslating}
+                  mode="recognition"
+                  onFrameDetected={handleFrameDetected}
+                />
+              </div>
+
+              <div className="flex justify-center mt-5 gap-3">
+                {!isTranslating ? (
+                  <Button variant="primary" onClick={startTranslation}>
+                    Start Translate
+                  </Button>
+                ) : (
+                  <Button variant="primary" onClick={stopTranslation}>
+                    Stop
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
 
-          <CameraView
-            isRecording={isTranslating}
-            mode="recognition"
-            onFrameDetected={handleFrameDetected}
-          />
-
-          <div className="flex justify-center mt-4 gap-3">
-            {!isTranslating ? (
-              <button
-                onClick={startTranslation}
-                className="px-6 py-2 rounded-lg bg-green-500 text-black font-semibold"
-              >
-                Start Translate
-              </button>
-            ) : (
-              <button
-                onClick={stopTranslation}
-                className="px-6 py-2 rounded-lg bg-red-500 text-white font-semibold"
-              >
-                Stop
-              </button>
-            )}
-          </div>
-
-          {/* Kết quả */}
-          <div className="mt-6 p-4 rounded-xl bg-slate-800/50 border border-white/10">
-            <div className="text-sm text-white/50 mb-1">Prediction</div>
-            {error ? (
-              <p className="text-red-400 text-sm">{error}</p>
-            ) : prediction === "unknown" ? (
-              <p className="text-yellow-400 italic">Analyzing – hold the sign steady...</p>
-            ) : prediction ? (
-              <div>
-                <span className="text-3xl font-bold text-white">{prediction}</span>
-                <span className="ml-3 text-sm text-green-400">
-                  {(confidence * 100).toFixed(1)}% confidence
+          {/* Cột bên phải: Prediction & Current Sentence */}
+          <div className="lg:col-span-5">
+            <div className={`${borderRadius.card} border ${palette.cardBorder} ${palette.cardBg} ${spacing.cardPadding}`}>
+              {/* Prediction */}
+              <div className="flex items-center gap-2 mb-3">
+                <Brain size={18} className={palette.textMuted} />
+                <span className={`${typography.body.small} uppercase tracking-wider ${palette.textMuted}`}>
+                  Prediction
                 </span>
               </div>
-            ) : (
-              <p className="text-white/40 italic">Waiting for sign...</p>
-            )}
 
-            {/* Câu hiện tại */}
-            <div className="mt-4 p-3 rounded-lg bg-slate-700/50 border border-white/10">
-              <div className="text-sm text-white/50 mb-1">Current Sentence</div>
-              <p className="text-xl font-semibold text-blue-300">
+              {error ? (
+                <div className={`flex items-center gap-2 ${palette.errorText}`}>
+                  <AlertTriangle size={18} />
+                  <span className={`${typography.body.normal} font-medium`}>{error}</span>
+                </div>
+              ) : prediction === "unknown" ? (
+                <div className="flex items-center gap-2">
+                  <Loader2 size={18} className={`animate-spin ${palette.infoText}`} />
+                  <span className={`${typography.body.normal} italic ${palette.infoText}`}>
+                    Analyzing – hold steady...
+                  </span>
+                </div>
+              ) : prediction ? (
+                <div>
+                  <div className={`${typography.predictionValue} ${palette.textPrimary}`}>
+                    {prediction}
+                  </div>
+                  <div className={`mt-1 text-sm ${palette.textMuted}`}>
+                    {(confidence * 100).toFixed(1)}% confidence
+                  </div>
+                </div>
+              ) : (
+                <div className={`${typography.body.normal} ${palette.textMuted} italic`}>
+                  Waiting for sign...
+                </div>
+              )}
+
+              <hr className={`my-5 border-t ${palette.cardBorder}`} />
+
+              {/* Current Sentence */}
+              <div className="flex items-center gap-2 mb-3">
+                <MessageSquare size={18} className={palette.textMuted} />
+                <span className={`${typography.body.small} uppercase tracking-wider ${palette.textMuted}`}>
+                  Current Sentence
+                </span>
+              </div>
+              <p className={`${typography.predictionValue} ${palette.textPrimary}`}>
                 {sentence || "..."}
               </p>
             </div>

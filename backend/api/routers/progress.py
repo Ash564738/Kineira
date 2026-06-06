@@ -19,13 +19,22 @@ async def get_my_progress(
     db: Session = Depends(get_db)
 ):
     """Trả về tiến độ của người dùng hiện tại (dựa trên token)."""
-    return get_user_progress(db, current_user.id)
+    logger.debug(f"Fetching progress for current user id={current_user.id}")
+    progress = get_user_progress(db, current_user.id)
+    # get_user_progress có thể trả về một list hoặc object, log số lượng để kiểm tra
+    if isinstance(progress, list):
+        logger.debug(f"Progress data for user {current_user.id}: {len(progress)} entries")
+    else:
+        logger.debug(f"Progress data for user {current_user.id}: {progress}")
+    return progress
 
 @router.get("/users/{user_id}/progress", response_model=list[ProgressResponse])
 async def user_progress(user_id: int, db: Session = Depends(get_db)) -> list[ProgressResponse]:
+    logger.debug(f"GET /users/{user_id}/progress")
     try:
         rows = get_user_progress(db, user_id)
-        return [
+        logger.debug(f"Fetched {len(rows)} progress rows for user {user_id}")
+        result = [
             ProgressResponse(
                 sign_id=row.sign_id,
                 best_score=float(row.best_score),
@@ -34,6 +43,8 @@ async def user_progress(user_id: int, db: Session = Depends(get_db)) -> list[Pro
             )
             for row in rows
         ]
+        logger.debug(f"Returning {len(result)} progress entries")
+        return result
     except Exception as exc:
         logger.exception("user_progress failed")
         raise HTTPException(status_code=500, detail=str(exc))
@@ -41,6 +52,7 @@ async def user_progress(user_id: int, db: Session = Depends(get_db)) -> list[Pro
 
 @router.post("/users/{user_id}/progress", response_model=AttemptResponse)
 async def create_user_attempt(user_id: int, req: AttemptRequest, db: Session = Depends(get_db)) -> AttemptResponse:
+    logger.debug(f"POST /users/{user_id}/progress - lesson_id={req.lesson_id}, sign_id={req.sign_id}, score={req.score}")
     try:
         attempt = create_attempt(
             db=db,
@@ -51,7 +63,8 @@ async def create_user_attempt(user_id: int, req: AttemptRequest, db: Session = D
             feedback=req.feedback,
             landmarks_data=req.landmarks_data or "",
         )
-        return AttemptResponse(
+        logger.info(f"Created attempt id={attempt.id} for user {user_id}")
+        response = AttemptResponse(
             id=attempt.id,
             lesson_id=attempt.lesson_id,
             sign_id=attempt.sign_id,
@@ -59,6 +72,8 @@ async def create_user_attempt(user_id: int, req: AttemptRequest, db: Session = D
             feedback=attempt.feedback or "",
             created_at=(attempt.created_at or datetime.utcnow()).isoformat(),
         )
+        logger.debug(f"Returning attempt response: id={response.id}, created_at={response.created_at}")
+        return response
     except Exception as exc:
         logger.exception("create_user_attempt failed")
         raise HTTPException(status_code=500, detail=str(exc))
@@ -66,9 +81,11 @@ async def create_user_attempt(user_id: int, req: AttemptRequest, db: Session = D
 
 @router.get("/users/{user_id}/attempts", response_model=list[AttemptResponse])
 async def user_attempts(user_id: int, db: Session = Depends(get_db)) -> list[AttemptResponse]:
+    logger.debug(f"GET /users/{user_id}/attempts")
     try:
         rows = get_user_attempts(db, user_id)
-        return [
+        logger.debug(f"Fetched {len(rows)} attempts for user {user_id}")
+        result = [
             AttemptResponse(
                 id=row.id,
                 lesson_id=row.lesson_id,
@@ -79,6 +96,8 @@ async def user_attempts(user_id: int, db: Session = Depends(get_db)) -> list[Att
             )
             for row in rows
         ]
+        logger.debug(f"Returning {len(result)} attempt responses")
+        return result
     except Exception as exc:
         logger.exception("user_attempts failed")
         raise HTTPException(status_code=500, detail=str(exc))

@@ -1,3 +1,5 @@
+# api/routers/ai_coach.py
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -6,6 +8,8 @@ import numpy as np
 from db.repository import get_db, get_user_by_id, add_xp
 from db.models import Attempt
 from api.services.ai_service import get_ai_coach_feedback
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ai-coach", tags=["ai-coach"])
 
@@ -35,11 +39,10 @@ class FeedbackRequest(BaseModel):
     hand_similarity: float
     motion_score: float
     body_score: float
-    finger_details: Optional[dict] = None   # thêm chi tiết ngón tay
+    finger_details: Optional[dict] = None
 
 
 def _build_fallback_feedback(req: FeedbackRequest) -> dict:
-    """Logic cũ (hardcoded) khi AI không khả dụng."""
     overall_score = (req.hand_similarity * 0.5 + req.motion_score * 0.3 + req.body_score * 0.2) * 100
 
     hand_issues = []
@@ -47,20 +50,24 @@ def _build_fallback_feedback(req: FeedbackRequest) -> dict:
     if req.hand_similarity < 0.7:
         hand_issues.extend(["Hand position not accurate", "Finger extension incomplete"])
         hand_recommendations.extend(["Adjust hand position to match reference", "Extend fingers more fully"])
+    else:
+        hand_recommendations.append("Great hand positioning! Keep it up!")
 
     motion_issues = []
     motion_recommendations = []
     if req.motion_score < 0.7:
         motion_issues.extend(["Motion too slow", "Motion path incorrect"])
         motion_recommendations.extend(["Increase motion speed", "Follow the reference path more closely"])
+    else:
+        motion_recommendations.append("Good motion! Try to make it smoother for an even better score.")
 
     body_issues = []
     body_recommendations = []
     if req.body_score < 0.7:
         body_issues.extend(["Hand height incorrect", "Wrist rotation off"])
         body_recommendations.extend(["Adjust hand height", "Increase wrist rotation"])
-
-    # weak signs from DB
+    else:
+        body_recommendations.append("Nice body posture! Focus on maintaining it throughout the sign.")
     return {
         "overall_score": overall_score,
         "hand_feedback": {
@@ -90,11 +97,18 @@ def _build_fallback_feedback(req: FeedbackRequest) -> dict:
 
 @router.post("/feedback", response_model=CoachFeedback)
 async def get_feedback(req: FeedbackRequest, db: Session = Depends(get_db)):
+    logger.info(f"AI Coach request: user_id={req.user_id}, sign={req.sign}, hand={req.hand_similarity}, motion={req.motion_score}, body={req.body_score}")
+
     user = get_user_by_id(db, req.user_id)
     if not user:
+        logger.warning(f"User {req.user_id} not found")
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Lấy lịch sử luyện tập gần đây
+    # Overall score (before AI)
+    overall_score = (req.hand_similarity * 0.5 + req.motion_score * 0.3 + req.body_score * 0.2) * 100
+    logger.debug(f"Computed overall_score (pre-AI): {overall_score:.1f}")
+
+    # Lịch sử luyện tập
     recent_attempts = (
         db.query(Attempt)
         .filter(Attempt.user_id == req.user_id)
@@ -109,26 +123,28 @@ async def get_feedback(req: FeedbackRequest, db: Session = Depends(get_db)):
             sign_stats[name] = {"total": 0, "count": 0}
         sign_stats[name]["total"] += a.score
         sign_stats[name]["count"] += 1
-
     recent = [{"sign": k, "avg": v["total"]/v["count"], "count": v["count"]} for k, v in sign_stats.items()]
+    logger.debug(f"Recent sign history: {recent}")
 
-    # Thử gọi AI
+    # Gọi AI service
+    logger.info("Calling AI service for feedback...")
     ai_data = get_ai_coach_feedback(
         sign=req.sign,
         hand_similarity=req.hand_similarity,
         motion_score=req.motion_score,
         body_score=req.body_score,
-        overall_score=(req.hand_similarity * 0.5 + req.motion_score * 0.3 + req.body_score * 0.2) * 100,
+        overall_score=overall_score,
         finger_details=req.finger_details,
         recent_scores=recent,
     )
 
     if ai_data:
-        xp_earned = ai_data.get("xp_earned", int(max(5, (ai_data["overall_score"]) / 20)))
+        logger.info("AI feedback received successfully")
+        xp_earned = ai_data.get("xp_earned", int(max(5, ai_data["overall_score"] / 20)))
         add_xp(db, req.user_id, xp_earned)
         return ai_data
 
-    # Fallback
+    logger.warning("AI feedback failed – using fallback feedback")
     fallback = _build_fallback_feedback(req)
     add_xp(db, req.user_id, fallback["xp_earned"])
     return fallback
@@ -136,6 +152,7 @@ async def get_feedback(req: FeedbackRequest, db: Session = Depends(get_db)):
 
 @router.get("/weak-signs/{user_id}")
 async def get_weak_signs(user_id: int, db: Session = Depends(get_db)):
+    logger.info(f"Fetching weak signs for user {user_id}")
     user = get_user_by_id(db, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -160,4 +177,5 @@ async def get_weak_signs(user_id: int, db: Session = Depends(get_db)):
         })
 
     weak_signs.sort(key=lambda x: x["average_score"])
+    logger.info(f"Weak signs found: {[s['sign'] for s in weak_signs[:5]]}")
     return weak_signs[:5]

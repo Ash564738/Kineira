@@ -9,6 +9,8 @@ import TopNav from '../components/layout/TopNav';
 import { FEATURE_SIZE, FrameSample, VIDEOS_PER_ACTION, FRAMES_PER_VIDEO } from '../types/landmarks';
 import { useAuth } from '../contexts/AuthContext';
 import { useRouter } from 'next/router';
+import { useTheme } from '../contexts/ThemeContext';
+import { themeColors, typography, spacing, borderRadius, effects } from '../styles/theme';
 
 const STATUS_POLL_MS = 10000;
 const MAX_WAIT_MS_PER_FRAME = 5000;
@@ -18,9 +20,10 @@ const PAUSE_SECONDS = 5;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const Collect: React.FC = () => {
-  // ========== TẤT CẢ HOOKS PHẢI ĐƯỢC GỌI TRƯỚC RETURN ==========
   const { user } = useAuth();
   const router = useRouter();
+  const { theme } = useTheme();
+  const palette = themeColors[theme];
 
   const [allStatus, setAllStatus] = useState<AllStatus>({});
   const [collectingState, setCollectingState] = useState({
@@ -141,7 +144,6 @@ const Collect: React.FC = () => {
             if (prev <= 1) {
               clearInterval(interval);
               if (!manualContinue) {
-                // tự động tiếp tục khi hết giờ
                 setInfo(null);
                 setShowContinueButton(false);
                 resolve();
@@ -158,7 +160,6 @@ const Collect: React.FC = () => {
           resolve();
         };
       } else {
-        // Nếu seconds = 0, cần người dùng bấm nút mới tiếp tục
         pauseResolveRef.current = () => {
           setInfo(null);
           setShowContinueButton(false);
@@ -167,7 +168,7 @@ const Collect: React.FC = () => {
       }
     });
   };
-  // Hàm chờ chuyển tay (đặc biệt)
+
   const waitForHandSwitch = (): Promise<void> => {
     return pauseWithUI(
       'Please switch hands to perform the gesture. Click "Ready" to continue.',
@@ -176,7 +177,6 @@ const Collect: React.FC = () => {
     );
   };
 
-  // Hàm nghỉ giữa video
   const pauseBetweenVideos = (videoNum: number): Promise<void> => {
     return pauseWithUI(
       `Please take a break after video ${videoNum}. Continuing in ${PAUSE_SECONDS}s...`,
@@ -185,12 +185,10 @@ const Collect: React.FC = () => {
     );
   };
 
-  // Hàm bắt sự kiện click nút tiếp tục
   const handleContinuePause = () => {
     pauseResolveRef.current?.();
   };
 
-  // Sửa captureOneVideo: không setError làm dừng toàn bộ, chỉ trả về false
   const captureOneVideo = async (action: string, videoNum: number): Promise<boolean> => {
     console.log(`[Collect] Starting video ${videoNum} for ${action}`);
     const framesBuffer: { frame_num: number; keypoints: number[] }[] = [];
@@ -200,10 +198,9 @@ const Collect: React.FC = () => {
 
       const sample = await waitForValidSample();
       if (!sample) {
-        // Không dừng toàn bộ, chỉ báo lỗi video này
         setError(`No valid keypoints for video ${videoNum}, frame ${frameNum}. This video will be retried later.`);
         console.warn(`[Collect] frame ${frameNum} invalid or timeout`);
-        return false;  // thất bại video này
+        return false;
       }
 
       console.log(`[Frame ${frameNum}] keypoints length=${sample.keypoints.length}, first10=`, sample.keypoints.slice(0, 10));
@@ -223,29 +220,23 @@ const Collect: React.FC = () => {
     }
   };
 
-  // Retry các video lỗi
   const retryFailedVideos = async (action: string, failed: number[]) => {
     setError(null);
     setInfo(`${failed.length} failed video(s). Preparing to retry...`);
     for (const videoNum of failed) {
       if (stopRequested.current) break;
-      // Xóa video cũ nếu có và bắt đầu với overwrite
       await collectionService.deleteVideo(action, videoNum);
-      const startOk = await collectionService.startCollection(action, videoNum, true); // overwrite
+      const startOk = await collectionService.startCollection(action, videoNum, true);
       if (!startOk) {
         setError(`Cannot restart video ${videoNum}. Stopping retry.`);
         break;
       }
-      // Cập nhật UI
       setCollectingState(prev => ({ ...prev, isCollecting: true, videoNum, frameNum: 0 }));
       const ok = await captureOneVideo(action, videoNum);
       if (!ok) {
-        // Nếu vẫn lỗi, có thể cho vào danh sách failed mới hoặc dừng
         setError(`Video ${videoNum} still failed after retry.`);
-        // Ở đây ta break, bạn có thể xử lý tinh tế hơn
         break;
       }
-      // Nghỉ giữa các lần retry
       if (!stopRequested.current) await pauseWithUI(`Please take a break after video ${videoNum}.`, PAUSE_SECONDS, true);
       await loadAllStatus();
     }
@@ -253,7 +244,6 @@ const Collect: React.FC = () => {
     setFailedVideos([]);
   };
 
-  // Hàm chạy tất cả video (chính)
   const runAllVideos = async (action: string) => {
     if (lockedRef.current) return;
     lockedRef.current = true;
@@ -274,15 +264,12 @@ const Collect: React.FC = () => {
       const failed: number[] = [];
 
       while (nextVideo <= TOTAL_VIDEOS && !stopRequested.current) {
-        // Kiểm tra đổi tay nếu áp dụng (action yêu cầu cả hai tay)
-        // Bạn có thể kiểm tra action có cần đổi tay không (ví dụ nếu target = 100)
         if (TOTAL_VIDEOS >= VIDEOS_PER_HAND * 2 && nextVideo === VIDEOS_PER_HAND + 1) {
           await waitForHandSwitch();
         }
 
         const startOk = await collectionService.startCollection(action, nextVideo, false);
         if (!startOk) {
-          // Nếu video tồn tại và không overwrite, bỏ qua (có thể đã hoàn thành)
           nextVideo++;
           continue;
         }
@@ -292,7 +279,6 @@ const Collect: React.FC = () => {
           failed.push(nextVideo);
         }
 
-        // Nghỉ giữa video (nếu chưa dừng)
         if (!stopRequested.current && nextVideo < TOTAL_VIDEOS) {
           await pauseBetweenVideos(nextVideo);
         }
@@ -302,7 +288,6 @@ const Collect: React.FC = () => {
         await loadAllStatus();
       }
 
-      // Sau khi vòng lặp kết thúc
       if (failed.length > 0 && !stopRequested.current) {
         setFailedVideos(failed);
         await retryFailedVideos(action, failed);
@@ -385,49 +370,61 @@ const Collect: React.FC = () => {
     (s: any) => s.videos_collected >= s.target
   );
 
-  return (
-    <div className="min-h-screen bg-slate-950 text-white">
-      <TopNav active="collect" />
-      <main className="max-w-7xl mx-auto px-6 py-8">
-        <h1 className="text-2xl font-semibold mb-6">Data Collection</h1>
+  // ---------- Button classes using theme tokens ----------
+  const cardActiveClass = `w-full py-1.5 ${borderRadius.button} text-sm font-medium ${effects.transition} ${palette.actionButtonBg} ${palette.actionButtonText} ${palette.actionButtonHoverBg} ${palette.actionButtonHoverText}`;
+  const cardDisabledClass = `w-full py-1.5 ${borderRadius.button} text-sm font-medium ${effects.transition} ${palette.disabledButtonBg} ${palette.disabledButtonText} cursor-not-allowed`;
 
+  const largeActiveClass = `px-5 py-3 ${borderRadius.button} font-semibold ${palette.actionButtonBg} ${palette.actionButtonText} ${palette.actionButtonHoverBg} ${palette.actionButtonHoverText} ${effects.transition}`;
+  const largeDisabledClass = `px-5 py-3 ${borderRadius.button} font-semibold ${effects.transition} ${palette.disabledButtonBg} ${palette.disabledButtonText} cursor-not-allowed`;
+
+  // ========== JSX ==========
+  return (
+    <div className={`min-h-screen ${palette.pageBg} ${typography.fontFamily}`}>
+      <TopNav active="collect" />
+      <main className={spacing.container}>
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-10">
+          <div>
+            <h1 className={`${typography.heading.pageTitle} ${palette.textPrimary}`}>Data Collection</h1>
+            <p className={`${palette.textMuted} mt-2`}>Collect data for training sign language recognition models.</p>
+          </div>
+        </div>
+
+        {/* Error notification */}
         {error && (
-          <div className="mb-4 p-3 rounded-lg bg-red-500/20 border border-red-500/50 text-red-200">
+          <div className={`mb-4 p-4 ${borderRadius.smallBox} border ${palette.cardBorder} ${palette.errorText} ${palette.cardBg}`}>
             {error}
           </div>
         )}
 
-        {/* Hiển thị thông báo tạm dừng/đổi tay */}
+        {/* Info / pause notification */}
         {info && (
-          <div className="mb-4 p-4 rounded-lg bg-blue-500/20 border border-blue-500/50 text-blue-200 flex flex-col items-center">
+          <div className={`mb-4 p-4 ${borderRadius.smallBox} border ${palette.cardBorder} ${palette.infoText} ${palette.cardBg} flex flex-col items-center`}>
             <p className="mb-3">{info}</p>
             {pauseCountdown > 0 && <p className="text-lg font-bold mb-2">{pauseCountdown}s</p>}
             {showContinueButton && (
-              <button
-                onClick={handleContinuePause}
-                className="px-4 py-2 bg-white text-black rounded-lg font-semibold hover:bg-white/90"
-              >
+              <button onClick={handleContinuePause} className={largeActiveClass}>
                 Continue Now
               </button>
             )}
           </div>
         )}
 
+        {/* Recording panel */}
         {collectingState.isCollecting && (
-          <div className="mb-8 rounded-2xl border border-white/10 bg-slate-900/40 p-5">
+          <div className={`mb-8 ${borderRadius.card} border ${palette.cardBorder} ${palette.cardBg} ${spacing.cardPadding}`}>
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold">
+              <h2 className={`${typography.heading.cardTitle} ${palette.textPrimary}`}>
                 Recording: {collectingState.action}
               </h2>
-              <span className="text-sm text-white/60">
+              <span className={`${typography.body.normal} ${palette.textMuted}`}>
                 Video {collectingState.videoNum}/{targetVideosRef.current} · Frame{' '}
                 {collectingState.frameNum}/{FRAMES_PER_VIDEO}
               </span>
             </div>
 
-            <div className="h-2 bg-slate-700 rounded-full mb-5">
+            <div className={`h-2 ${palette.progressTrackBg} rounded-full mb-5`}>
               <div
-                className="h-full bg-green-500 rounded-full transition-all duration-100"
+                className={`h-full rounded-full ${palette.progressFillBg} transition-all duration-100`}
                 style={{ width: `${(collectingState.frameNum / FRAMES_PER_VIDEO) * 100}%` }}
               />
             </div>
@@ -440,32 +437,29 @@ const Collect: React.FC = () => {
             />
 
             <div className="mt-4 flex justify-center">
-              <button
-                onClick={handleCancelCollection}
-                className="px-5 py-2 rounded-lg bg-red-500/20 border border-red-500/50 text-red-200 hover:bg-red-500/30"
-              >
+              <button onClick={handleCancelCollection} className={largeActiveClass}>
                 Stop Collection
               </button>
             </div>
           </div>
         )}
 
-        {/* Danh sách actions */}
+        {/* Action cards */}
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
           {Object.entries(allStatus).map(([action, status]: [string, any]) => {
             const complete = status.videos_collected >= status.target;
             return (
               <div
                 key={action}
-                className="rounded-xl border border-white/10 bg-slate-900/40 p-3 flex flex-col items-center"
+                className={`${borderRadius.item} border ${palette.cardBorder} ${palette.cardBg} ${spacing.itemPadding} flex flex-col items-center`}
               >
-                <span className="text-lg font-bold mb-1">{action}</span>
-                <span className="text-xs text-white/50 mb-2">
+                <span className={`${typography.heading.cardTitle} ${palette.textPrimary} mb-1`}>{action}</span>
+                <span className={`${typography.body.small} ${palette.textMuted} mb-2`}>
                   {status.videos_collected}/{status.target}
                 </span>
-                <div className="w-full h-1.5 bg-slate-700 rounded-full mb-3">
+                <div className={`w-full h-1.5 ${palette.progressTrackBg} rounded-full mb-3`}>
                   <div
-                    className="h-full bg-green-500 rounded-full"
+                    className={`h-full rounded-full ${palette.progressFillBg} transition-all duration-300`}
                     style={{
                       width: `${(status.videos_collected / status.target) * 100}%`,
                     }}
@@ -474,13 +468,7 @@ const Collect: React.FC = () => {
                 <button
                   onClick={() => handleStartCollection(action)}
                   disabled={complete || lockedRef.current}
-                  className={`w-full py-1.5 rounded-lg text-sm font-medium transition ${
-                    complete
-                      ? 'bg-slate-700 text-white/40 cursor-not-allowed'
-                      : lockedRef.current
-                      ? 'bg-slate-700 text-white/40 cursor-not-allowed'
-                      : 'bg-white text-black hover:bg-white/90'
-                  }`}
+                  className={complete || lockedRef.current ? cardDisabledClass : cardActiveClass}
                 >
                   {complete ? 'Complete' : 'Collect'}
                 </button>
@@ -489,22 +477,20 @@ const Collect: React.FC = () => {
           })}
         </div>
 
-        <div className="mt-10 rounded-2xl border border-white/10 bg-slate-900/40 p-5">
-          <h2 className="text-lg font-semibold mb-3">Model Training</h2>
+        {/* Training section */}
+        <div className={`mt-10 ${borderRadius.card} border ${palette.cardBorder} ${palette.cardBg} ${spacing.cardPadding}`}>
+          <h2 className={`${typography.heading.cardTitle} ${palette.textPrimary} mb-3`}>Model Training</h2>
           {trainingStatus ? (
             <div>
-              <p className="text-sm text-white/70">Status: {trainingStatus.status}</p>
-              <p className="text-sm text-white/70">Message: {trainingStatus.message}</p>
+              <p className={`${typography.body.normal} ${palette.textMuted}`}>Status: {trainingStatus.status}</p>
+              <p className={`${typography.body.normal} ${palette.textMuted}`}>Message: {trainingStatus.message}</p>
               {trainingStatus.accuracy && (
-                <p className="text-sm text-white/70">
+                <p className={`${typography.body.normal} ${palette.textMuted}`}>
                   Accuracy: {(trainingStatus.accuracy * 100).toFixed(2)}%
                 </p>
               )}
               {isTraining && (
-                <button
-                  onClick={handleCancelTraining}
-                  className="mt-3 px-4 py-2 rounded-lg bg-red-500/20 border border-red-500/50 text-red-200"
-                >
+                <button onClick={handleCancelTraining} className={`mt-3 ${largeActiveClass}`}>
                   Cancel Training
                 </button>
               )}
@@ -513,7 +499,7 @@ const Collect: React.FC = () => {
             <button
               onClick={handleStartTraining}
               disabled={!canStartTraining}
-              className="px-5 py-2 rounded-lg bg-white text-black disabled:bg-slate-700 disabled:text-white/40"
+              className={canStartTraining ? largeActiveClass : largeDisabledClass}
             >
               {canStartTraining ? 'Start Training' : 'Collect all videos first'}
             </button>

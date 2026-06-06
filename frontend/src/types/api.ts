@@ -18,6 +18,8 @@ export interface ScoringResult {
   sign?: string;
   confidence?: number;
   hand_similarity?: number;
+  pose_similarity?: number;
+  face_similarity?: number;
   finger_details?: Record<string, FingerDetail>;
   overall_score?: number;
 }

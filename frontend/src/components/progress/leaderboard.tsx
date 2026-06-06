@@ -1,7 +1,9 @@
-// components/progress/leaderboard.tsx
+// src/components/progress/LeaderBoard.tsx
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { Crown, Medal, Award, Flame, Trophy } from 'lucide-react';
+import { Crown, Medal, Award, Flame, Trophy, Sparkles } from 'lucide-react';
+import { useTheme } from '../../contexts/ThemeContext';
+import { themeColors, typography, spacing, borderRadius, effects } from '../../styles/theme';
 
 interface LeaderboardEntry {
   rank: number;
@@ -15,6 +17,9 @@ interface LeaderboardEntry {
 
 export default function Leaderboard() {
   const { user } = useAuth();
+  const { theme } = useTheme();
+  const palette = themeColors[theme];
+
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [userRank, setUserRank] = useState<LeaderboardEntry | null>(null);
   const [loading, setLoading] = useState(true);
@@ -28,74 +33,121 @@ export default function Leaderboard() {
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/leaderboard/top?limit=20`);
       const data = await res.json();
       setEntries(data);
-
       if (user) {
         const rankRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/leaderboard/user/${user.id}`);
-        const rankData = await rankRes.json();
-        setUserRank(rankData);
+        setUserRank(await rankRes.json());
       }
     } catch (err) {
-      console.error('Failed to fetch leaderboard:', err);
+      console.error(err);
     } finally {
       setLoading(false);
     }
   };
 
+  if (loading) {
+    return (
+      <p className={`py-10 text-center ${typography.body.normal} ${palette.textMuted}`}>
+        Loading leaderboard…
+      </p>
+    );
+  }
+
+  // Icon rank sử dụng theme tokens
   const getRankIcon = (rank: number) => {
-    if (rank === 1) return <Crown size={20} className="text-yellow-400" />;
-    if (rank === 2) return <Medal size={20} className="text-gray-300" />;
-    if (rank === 3) return <Award size={20} className="text-amber-600" />;
-    return <span className="text-white font-bold text-sm">#{rank}</span>;
+    const iconClasses = 'h-5 w-5';
+    const containerClasses = `flex items-center justify-center ${spacing.rankCircle} ${borderRadius.iconContainer} ${palette.iconContainerBg} ${palette.iconContainerText}`;
+    
+    if (rank === 1)
+      return (
+        <div className={containerClasses}>
+          <Crown className={iconClasses} />
+        </div>
+      );
+    if (rank === 2)
+      return (
+        <div className={containerClasses}>
+          <Medal className={iconClasses} />
+        </div>
+      );
+    if (rank === 3)
+      return (
+        <div className={containerClasses}>
+          <Award className={iconClasses} />
+        </div>
+      );
+    return (
+      <div className={containerClasses}>
+        <span className={`text-sm font-bold`}>#{rank}</span>
+      </div>
+    );
   };
 
-  if (loading) return <p className="text-white/60 py-8 text-center">Loading leaderboard...</p>;
   return (
-    <div className="space-y-4">
+    <div className={`space-y-5 ${typography.fontFamily}`}>
+      {/* Your rank card */}
       {user && userRank && (
-        <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-5">
-          <div className="flex items-center justify-between">
+        <div className={`${borderRadius.card} border ${palette.cardBorder} ${palette.cardBg} ${spacing.cardPadding}`}>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <p className="text-white/60 text-sm">Your Rank</p>
-              <div className="flex items-baseline gap-2">
-                <Trophy size={24} className="text-yellow-400" />
-                <p className="text-4xl font-bold text-white">#{userRank.rank}</p>
+              <div className={`mb-3 inline-flex items-center gap-2 ${palette.textPrimary} ${typography.accent}`}>
+                Your rank
+              </div>
+              <div className="flex items-center gap-3">
+                <div className={`flex ${spacing.iconContainer} items-center justify-center ${borderRadius.iconContainer} ${palette.iconContainerBg} ${palette.iconContainerText}`}>
+                  <Trophy className="h-5 w-5" />
+                </div>
+                <p className={`${typography.stat.value} ${palette.textPrimary}`}>#{userRank.rank}</p>
               </div>
             </div>
-            <div className="text-right">
-              <p className="text-white font-semibold text-lg">{userRank.username}</p>
-              <p className="text-white/60">Level {userRank.level} · {userRank.xp} XP</p>
-              <p className="text-white/60">Avg Score: {userRank.avg_score.toFixed(0)}%</p>
+            <div className="sm:text-right">
+              <p className={`${typography.heading.cardTitle} ${palette.textPrimary}`}>{userRank.username}</p>
+              <p className={`mt-1 ${typography.body.small} ${palette.textMuted}`}>
+                Level {userRank.level} · {userRank.xp} XP
+              </p>
+              <p className={`mt-1 ${typography.body.small} ${palette.textMuted}`}>
+                Avg Score: {userRank.avg_score.toFixed(0)}%
+              </p>
             </div>
           </div>
         </div>
       )}
 
-      {entries.map((entry) => (
-        <div
-          key={entry.user_id}
-          className={`rounded-2xl p-4 flex items-center justify-between border transition ${
-            user?.id === entry.user_id
-              ? 'bg-white/10 border-white/30'
-              : 'bg-white/5 border-white/10 hover:bg-white/10'
-          }`}
-        >
-          <div className="flex items-center gap-4 flex-1">
-            <div className="flex items-center justify-center w-10 h-10 rounded-full bg-white/10">
-              {getRankIcon(entry.rank)}
+      {/* Leaderboard entries */}
+      <div className="space-y-3">
+        {entries.map((entry) => {
+          const isCurrentUser = user?.id === entry.user_id;
+          return (
+            <div
+              key={entry.user_id}
+              className={`${borderRadius.item} border p-4 ${effects.transition} ${
+                isCurrentUser
+                  ? `${palette.highlightBg} ${palette.highlightBorder}`
+                  : `${palette.cardBg} ${palette.cardBorder}`
+              }`}
+            >
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex min-w-0 flex-1 items-center gap-4">
+                  {/* Rank icon */}
+                  {getRankIcon(entry.rank)}
+
+                  <div className="min-w-0 flex-1">
+                    <p className={`truncate font-semibold ${palette.textPrimary}`}>{entry.username}</p>
+                    <p className={`mt-1 ${typography.body.small} ${palette.textMuted}`}>
+                      Level {entry.level} · {entry.xp} XP · Avg {entry.avg_score.toFixed(0)}%
+                    </p>
+                  </div>
+                </div>
+
+                {/* Streak badge */}
+                <div className={`flex items-center gap-2 ${borderRadius.badge} ${spacing.badgePadding} text-sm font-medium ${palette.badgeBg} ${palette.badgeText}`}>
+                  <Flame className={`h-4 w-4 ${palette.badgeStreakColor}`} />
+                  {entry.streak} day streak
+                </div>
+              </div>
             </div>
-            <div className="flex-1">
-              <p className="text-white font-semibold">{entry.username}</p>
-              <p className="text-white/60 text-sm">
-                Level {entry.level} · {entry.xp} XP · Avg: {entry.avg_score.toFixed(0)}%
-              </p>
-            </div>
-          </div>
-          <div className="text-right flex items-center gap-1">
-            <Flame size={14} className="text-orange-400" />
-            <p className="text-white/60 text-sm">{entry.streak} day streak</p>
-          </div>
-        </div>
-      ))}
+          );
+        })}
+      </div>
     </div>
   );
 }

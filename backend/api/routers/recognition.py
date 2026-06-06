@@ -14,9 +14,11 @@ from api.services.scoring import (
     compute_handshape_similarity,
     generate_feedback,
     mirror_user_hand,
+    DYNAMIC_SIGNS,
 )
 from config import LEFT_HAND_INDICES, N_HAND, RIGHT_HAND_INDICES
-from ml.hand_utils import detect_active_hands, analyze_hand_configuration
+from ml.hand_utils import analyze_hand_configuration
+
 WORD_MAP = {"ME": "I"}
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -50,6 +52,9 @@ class ScoreResponse(BaseModel):
     hand_similarity: Optional[float] = None
     finger_details: Optional[Dict[str, Any]] = None
     embedding_similarity: Optional[float] = None
+    pose_similarity: Optional[float] = None
+    face_similarity: Optional[float] = None
+    display_score: Optional[float] = None
 
 
 def _unique_ordered(items: List[str]) -> List[str]:
@@ -117,6 +122,7 @@ async def score(req: ScoreRequest) -> ScoreResponse:
     logger.info("=" * 80)
 
     expected_sign = req.target_sign
+    is_dynamic = expected_sign in DYNAMIC_SIGNS if expected_sign else False
 
     raw_user_seq = np.array(req.user_sequence, dtype=np.float32)
     if raw_user_seq.size == 0:
@@ -126,26 +132,25 @@ async def score(req: ScoreRequest) -> ScoreResponse:
     detected_hand = hand_cfg["hand_type"]
     dominant_hand = hand_cfg["dominant_hand"]
 
+    alignment_hand = "both"
     if detected_hand == "both":
         alignment_hand = dominant_hand if dominant_hand in ("left", "right") else "both"
     elif detected_hand in ("left", "right"):
         alignment_hand = detected_hand
-    else:
-        alignment_hand = "both"
 
-    # 1) Tải reference
     reference_seq = None
     loaded_hand = None
     need_mirror = False
 
     if req.reference_sequence is not None and len(req.reference_sequence) > 0:
         reference_seq = np.array(req.reference_sequence, dtype=np.float32)
+        reference_seq = normalize_relative_hand(reference_seq)
+        reference_seq = inference_service.normalize_sequence(reference_seq)
 
         ref_cfg = analyze_hand_configuration(reference_seq)
         loaded_hand = ref_cfg["hand_type"] if ref_cfg["hand_type"] in ("left", "right", "both") else "custom"
         if loaded_hand == "none":
             loaded_hand = alignment_hand if alignment_hand in ("left", "right", "both") else "both"
-
         logger.info(f"[SCORE] Using custom reference (hand={loaded_hand})")
 
     elif req.target_sign is not None:
@@ -159,7 +164,6 @@ async def score(req: ScoreRequest) -> ScoreResponse:
             preferred_hands = ["both", "right", "left"]
 
         ref_path, loaded_hand = _resolve_reference_path(ref_dir, sign, preferred_hands)
-
         if ref_path is None:
             raise HTTPException(status_code=400, detail=f"No reference for {sign}")
 
@@ -175,25 +179,18 @@ async def score(req: ScoreRequest) -> ScoreResponse:
     if reference_seq is None or reference_seq.size == 0:
         raise HTTPException(status_code=400, detail="Reference sequence cannot be empty")
 
-    # 2) Chuẩn hóa user
     user_seq_rel = normalize_relative_hand(raw_user_seq)
-
-    # 3) Mirror nếu handedness không khớp
     if need_mirror and loaded_hand in ("left", "right"):
         user_seq_rel = mirror_user_hand(user_seq_rel, target_hand=loaded_hand)
 
-    # 4) Scale nhất quán bằng scaler đã train
-    user_seq_norm = inference_service.normalize_sequence(user_seq_rel)
-    user_normalized = user_seq_norm
+    user_normalized = inference_service.normalize_sequence(user_seq_rel)
     ref_normalized = reference_seq
 
-    # 5) Prediction
-    pred_result = inference_service.predict_keras(req.user_sequence)
+    pred_result = inference_service.predict_keras(user_normalized, already_normalized=True)
     predicted_sign = pred_result.get("sign", "unknown")
     confidence = pred_result.get("confidence", 0.0)
     logger.info(f"[SCORE] Predicted sign: {predicted_sign} ({confidence:.2%})")
 
-    # 6) Chọn hand indices theo reference đã load
     if loaded_hand == "both":
         hand_indices = list(LEFT_HAND_INDICES) + list(RIGHT_HAND_INDICES)
         active_hand_for_score = "both"
@@ -204,7 +201,6 @@ async def score(req: ScoreRequest) -> ScoreResponse:
         hand_indices = list(RIGHT_HAND_INDICES)
         active_hand_for_score = "right"
     else:
-        # fallback
         if alignment_hand == "left":
             hand_indices = list(LEFT_HAND_INDICES)
             active_hand_for_score = "left"
@@ -215,46 +211,57 @@ async def score(req: ScoreRequest) -> ScoreResponse:
             hand_indices = list(LEFT_HAND_INDICES) + list(RIGHT_HAND_INDICES)
             active_hand_for_score = "both"
 
-    user_emb = inference_service.get_embedding(req.user_sequence)
-    ref_dir = inference_service.keras_model_path.parent
-    ref_emb_path = ref_dir / f"ref_{expected_sign}_{loaded_hand}_embed.npy"
-    emb_sim = 0.5   # mặc định nếu không tìm thấy
-    if ref_emb_path.exists():
-        ref_emb = np.load(ref_emb_path)
-        emb_sim = compute_embedding_similarity(user_emb, ref_emb)
-        logger.info(f"[SCORE] Embedding similarity: {emb_sim:.4f}")
-    else:
-        logger.warning(f"[SCORE] No embedding reference for {expected_sign}_{loaded_hand}")
+    user_emb = inference_service.get_embedding(user_normalized, already_normalized=True)
+    emb_sim = 0.5
+    if user_emb is not None:
+        ref_dir = inference_service.keras_model_path.parent
+        ref_emb_path = ref_dir / f"ref_{expected_sign}_{loaded_hand}_embed.npy"
+        if ref_emb_path.exists():
+            ref_emb = np.load(ref_emb_path)
+            emb_sim = compute_embedding_similarity(user_emb, ref_emb)
+            logger.info(f"[SCORE] Embedding similarity: {emb_sim:.4f}")
+        else:
+            logger.warning(f"[SCORE] No embedding reference for {expected_sign}_{loaded_hand}")
 
-    # 7) Handshape similarity mới: curl/extension, không dùng landmark distance thô
     hand_sim_pct = compute_handshape_similarity(
         user_normalized[:, hand_indices],
         ref_normalized[:, hand_indices],
-        N_HAND
+        N_HAND,
+        use_dtw=is_dynamic,
     ) * 100.0
 
     finger_feedback = compute_finger_details(
         user_normalized[:, hand_indices],
         ref_normalized[:, hand_indices],
-        N_HAND
+        N_HAND,
+        use_dtw=is_dynamic,
     )
 
-    logger.info(f"[SCORE] Hand similarity: {hand_sim_pct:.1f}%")
+    if is_dynamic and emb_sim is not None:
+        hand_sim_display = 0.35 * hand_sim_pct + 0.65 * emb_sim * 100.0
+    else:
+        hand_sim_display = hand_sim_pct
 
-    # 8) Tổng điểm
     score_dict = compute_hand_aware_score(
         user_normalized,
         ref_normalized,
         predicted_sign=predicted_sign,
         expected_sign=expected_sign,
         active_hand=active_hand_for_score,
-        hand_sim_override=hand_sim_pct / 100.0 if hand_sim_pct > 0 else 0.0,
+        hand_sim_override=hand_sim_display / 100.0 if hand_sim_display > 0 else 0.0,
         embedding_sim=emb_sim,
-        confidence=confidence
+        confidence=confidence,
+        is_dynamic=is_dynamic,
+    )
+
+    display_score = (
+        0.5 * hand_sim_display +
+        0.3 * score_dict["pose_score"] +
+        0.2 * score_dict["face_score"]
     )
 
     overall_score = score_dict["score"]
-    feedback = generate_feedback(overall_score)
+    feedback = generate_feedback(display_score)
 
     logger.info("SCORING PROCESS COMPLETED")
 
@@ -262,7 +269,7 @@ async def score(req: ScoreRequest) -> ScoreResponse:
         score=overall_score,
         feedback=feedback,
         accuracy=score_dict["hand_score"],
-        completeness=round(min(len(user_seq_norm) / 30, 1.0) * 100, 2),
+        completeness=round(min(len(user_normalized) / 30, 1.0) * 100, 2),
         timing=0.0,
         details={
             "hand_score": score_dict["hand_score"],
@@ -271,12 +278,19 @@ async def score(req: ScoreRequest) -> ScoreResponse:
             "penalty_applied": score_dict["penalty_applied"],
             "normalization_method": f"ref_{loaded_hand}",
             "embedding_similarity": emb_sim,
+            "pose_similarity": score_dict["pose_score"],
+            "face_similarity": score_dict["face_score"],
+            "display_score": round(display_score, 2),
+            "is_dynamic": is_dynamic,
         },
         sign=predicted_sign,
         confidence=confidence,
-        hand_similarity=hand_sim_pct,
+        hand_similarity=round(hand_sim_display, 2),
         embedding_similarity=emb_sim,
         finger_details=finger_feedback,
+        pose_similarity=score_dict["pose_score"],
+        face_similarity=score_dict["face_score"],
+        display_score=round(display_score, 2),
     )
 
 

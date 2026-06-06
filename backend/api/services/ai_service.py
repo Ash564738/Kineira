@@ -1,11 +1,17 @@
+# api/services/ai_service.py
 import os
 import json
+import logging
+
 from google import genai
 from google.genai import types
+
+logger = logging.getLogger(__name__)
 
 # Tự động khởi tạo client bằng API Key từ biến môi trường
 api_key = os.getenv("GOOGLE_API_KEY")
 client = genai.Client(api_key=api_key) if api_key else None
+
 
 def get_ai_coach_feedback(
     sign: str,
@@ -16,9 +22,13 @@ def get_ai_coach_feedback(
     finger_details: dict = None,
     recent_scores: list[dict] = None,
 ) -> dict | None:
-    
+    logger.debug(
+        "AI coach feedback requested for sign='%s', overall=%.0f%%, hand=%.0f%%, motion=%.0f%%, body=%.0f%%",
+        sign, overall_score, hand_similarity*100, motion_score*100, body_score*100
+    )
+
     if not os.getenv("GOOGLE_API_KEY") or client is None:
-        print("GOOGLE_API_KEY not set – skipping AI coach")
+        logger.warning("GOOGLE_API_KEY not set – skipping AI coach")
         return None
 
     # 1. Chuẩn bị dữ liệu chuỗi bổ sung
@@ -31,15 +41,16 @@ def get_ai_coach_feedback(
                 f"(curl: {info.get('curl_similarity', 0)*100:.0f}%, "
                 f"extension: {info.get('extension_similarity', 0)*100:.0f}%)\n"
             )
+        logger.debug("Built finger details text:\n%s", finger_text)
 
     recent_text = ""
     if recent_scores:
         recent_text = "Recent sign history:\n"
         for s in recent_scores:
             recent_text += f"- {s['sign']}: average {s['avg']:.0f}% ({s['count']} attempts)\n"
+        logger.debug("Built recent scores text:\n%s", recent_text)
 
     # 2. Xây dựng cấu trúc Định dạng dữ liệu đầu ra bắt buộc (Structured Outputs)
-    # Điều này ép Gemini bắt buộc phải trả về JSON chuẩn theo sơ đồ cấu trúc của bạn
     json_schema = types.Schema(
         type=types.Type.OBJECT,
         properties={
@@ -91,8 +102,8 @@ def get_ai_coach_feedback(
             "encouragement": types.Schema(type=types.Type.STRING),
         },
         required=[
-            "overall_score", "hand_feedback", "motion_feedback", 
-            "body_feedback", "weak_signs", "practice_plan", 
+            "overall_score", "hand_feedback", "motion_feedback",
+            "body_feedback", "weak_signs", "practice_plan",
             "xp_earned", "encouragement"
         ]
     )
@@ -116,6 +127,8 @@ Performance for sign "{sign}":
 Based on these numbers, provide encouraging feedback and a practice plan.
 """
 
+    logger.debug("Sending AI request to Gemini with prompt length %d chars", len(user_prompt))
+
     try:
         # Sử dụng mô hình mới nhất 'gemini-2.5-flash' tương thích hoàn toàn với API v1beta
         response = client.models.generate_content(
@@ -125,16 +138,17 @@ Based on these numbers, provide encouraging feedback and a practice plan.
                 system_instruction=system_instruction,
                 response_mime_type="application/json",
                 response_schema=json_schema,
-                temperature=0.2, # Đặt thấp để AI tuân thủ cấu trúc dữ liệu chính xác
+                temperature=0.2,
             ),
         )
-        
-        # Vì cấu hình bắt buộc JSON nên response.text chắc chắn là chuỗi JSON hợp lệ
+
         if response.text:
+            logger.debug("AI response received successfully, length %d", len(response.text))
             return json.loads(response.text)
-            
+
+        logger.warning("AI response was empty")
         return None
 
     except Exception as e:
-        print(f"AI Coach error: {e}")
+        logger.exception("AI Coach error: %s", e)
         return None

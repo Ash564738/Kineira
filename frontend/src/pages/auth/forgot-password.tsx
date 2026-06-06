@@ -1,6 +1,10 @@
+// src/pages/auth/forgot-password.tsx
 import { useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import Link from 'next/link';
+import Button from '../../components/layout/Button';
+import { useTheme } from '../../contexts/ThemeContext';
+import { themeColors, typography, spacing, borderRadius } from '../../styles/theme';
 
 export default function ForgotPassword() {
   const { forgotPassword } = useAuth();
@@ -8,6 +12,9 @@ export default function ForgotPassword() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
+
+  const { theme } = useTheme();
+  const palette = themeColors[theme];
 
   const handleSubmit = async (e: { preventDefault: () => void }) => {
     e.preventDefault();
@@ -26,32 +33,37 @@ export default function ForgotPassword() {
     }
   };
 
+  // Input class with theme tokens
+  const inputClasses = `w-full px-4 py-3 rounded-xl bg-white dark:bg-black border ${palette.cardBorder} ${palette.textPrimary} placeholder:${palette.textMuted} placeholder:opacity-60 focus:outline-none focus:ring-2 focus:ring-offset-2 dark:focus:ring-offset-black focus:ring-black dark:focus:ring-[#BBE1FA] transition`;
+
   return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4">
+    <div className={`min-h-screen ${palette.pageBg} ${typography.fontFamily} flex items-center justify-center px-4`}>
       <div className="w-full max-w-lg">
         <div className="text-center mb-10">
-          <h1 className="text-4xl font-bold text-white tracking-tight">Kineira</h1>
-          <p className="text-white/40 mt-3">Reset your password</p>
+          <h1 className={`${typography.heading.pageTitle} ${palette.textPrimary} tracking-tight`}>
+            Kineira
+          </h1>
+          <p className={`${palette.textMuted} mt-3`}>Reset your password</p>
         </div>
 
-        <div className="bg-slate-900/80 backdrop-blur-xl rounded-3xl border border-white/10 p-8 shadow-2xl">
-          <h2 className="text-2xl font-semibold text-white mb-8">Forgot Password</h2>
+        <div className={`${borderRadius.card} border ${palette.cardBorder} ${palette.cardBg} ${spacing.cardPadding} shadow-2xl`}>
+          <h2 className={`${typography.heading.sectionTitle} ${palette.textPrimary} mb-8`}>Forgot Password</h2>
 
           {error && (
-            <div className="mb-6 rounded-xl bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-red-300">
+            <div className={`mb-6 ${borderRadius.smallBox} border ${palette.cardBorder} bg-red-50 dark:bg-red-900/20 px-4 py-3 text-sm ${palette.errorText} dark:text-red-300`}>
               {error}
             </div>
           )}
 
           {success && (
-            <div className="mb-6 rounded-xl bg-green-500/10 border border-green-500/30 px-4 py-3 text-sm text-green-300">
+            <div className={`mb-6 ${borderRadius.smallBox} border ${palette.cardBorder} bg-green-50 dark:bg-green-900/20 px-4 py-3 text-sm text-green-700 dark:text-green-300`}>
               {success}
             </div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-white/60 mb-2">
+              <label htmlFor="email" className={`block text-sm font-medium ${palette.textMuted} mb-2`}>
                 Email Address
               </label>
               <input
@@ -60,23 +72,19 @@ export default function ForgotPassword() {
                 placeholder="Enter your email address"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-white/10 text-white placeholder-white/20 focus:outline-none focus:ring-2 focus:ring-white/30 transition"
+                className={inputClasses}
                 required
               />
             </div>
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-3 rounded-xl bg-white text-black font-semibold hover:bg-gray-100 transition disabled:opacity-50 disabled:cursor-not-allowed"
-            >
+            <Button type="submit" variant="primary" disabled={loading} className="w-full">
               {loading ? 'Sending...' : 'Send Reset Link'}
-            </button>
+            </Button>
           </form>
 
-          <p className="text-white/40 text-sm mt-8 text-center">
+          <p className={`${palette.textMuted} text-sm mt-8 text-center`}>
             Remember your password?{' '}
-            <Link href="/auth/login" className="text-white underline underline-offset-4 hover:text-white/80 transition">
+            <Link href="/auth/login" className={`${palette.textPrimary} underline underline-offset-4 hover:opacity-80 transition`}>
               Sign in
             </Link>
           </p>

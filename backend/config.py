@@ -19,6 +19,7 @@ ACTIONS = list("AB") + [
     "LOVE",
     "ME",
     "YOU",
+    "EAT",
 ]
 
 VIDEOS_PER_ACTION = 100
@@ -34,7 +35,7 @@ FACE_EXPRESSION_INDICES = [
 ]
 N_FACE = len(FACE_EXPRESSION_INDICES)
 FEATURE_SIZE = (N_HAND * 3) + (N_HAND * 3) + (N_POSE * 4) + (N_FACE * 3)
-
+# FEATURE_SIZE = 63 + 63 + 92 + 111 = 329
 # Hand indices constants
 LEFT_HAND_START = 0
 LEFT_HAND_END = N_HAND * 3          # 63
