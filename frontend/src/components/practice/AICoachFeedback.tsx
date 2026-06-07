@@ -1,4 +1,4 @@
-// src/pages/practice/AICoachFeedback.tsx
+// src/components/practice/AICoachFeedback.tsx
 import { useState, useEffect, useRef } from 'react';
 import { useTheme } from '../../contexts/ThemeContext';
 import { themeColors, typography, spacing, borderRadius } from '../../styles/theme';
@@ -127,7 +127,7 @@ export default function AICoachFeedback({
       </div>
 
       {feedback.weak_signs.length > 0 && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+        <div className={`${palette.cardBg} border ${palette.cardBorder} ${borderRadius.innerCard} p-4`}>
           <p className={`${palette.textPrimary} font-semibold mb-3`}>Weak Signs to Practice</p>
           <div className="space-y-2">
             {feedback.practice_plan.map((plan) => (
