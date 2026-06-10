@@ -1,12 +1,14 @@
 // src/pages/quiz.tsx
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import Link from 'next/link';
 import TopNav from '../components/layout/TopNav';
 import Button from '../components/layout/Button';
 import { useTheme } from '../contexts/ThemeContext';
 import { themeColors, typography, spacing, borderRadius } from '../styles/theme';
 import { HelpCircle, Loader2, CheckCircle2, XCircle } from 'lucide-react';
+import { apiUrl } from '../services/api/config';
+import ProtectedRoute from '../components/ProtectedRoute';
+import PageState from '@/components/ui/PageState';
 
 interface QuizQuestion {
   id: number;
@@ -14,7 +16,7 @@ interface QuizQuestion {
   options: string[];
 }
 
-export default function Quiz() {
+const QuizContent: React.FC = () => {
   const { user } = useAuth();
   const { theme } = useTheme();
   const palette = themeColors[theme];
@@ -23,17 +25,19 @@ export default function Quiz() {
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [score, setScore] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [selectedAnswer, setSelectedAnswer] = useState('');
   const [answered, setAnswered] = useState(false);
   const [isCorrect, setIsCorrect] = useState<boolean | null>(null);
   const [correctAnswer, setCorrectAnswer] = useState<string | null>(null);
   const [totalXpEarned, setTotalXpEarned] = useState(0);
 
-  useEffect(() => { fetchQuestions(); }, []);
-
-  const fetchQuestions = async () => {
+  const fetchQuestions = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/quiz/questions?count=5`);
+      const res = await fetch(apiUrl('/quiz/questions?count=5'));
+      if (!res.ok) throw new Error('Failed to load quiz');
       const data = await res.json();
       setQuestions(data);
       setCurrentQuestion(0);
@@ -41,12 +45,18 @@ export default function Quiz() {
       setAnswered(false);
       setIsCorrect(null);
       setCorrectAnswer(null);
-    } catch (err) {
-      console.error('Failed to fetch questions:', err);
+      setTotalXpEarned(0);
+    } catch (err: any) {
+      setError(err.message || 'Failed to load quiz. Please try again.');
+      console.error('Quiz fetch error:', err);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchQuestions();
+  }, [fetchQuestions]);
 
   const handleAnswer = async (answer: string) => {
     if (answered) return;
@@ -54,15 +64,16 @@ export default function Quiz() {
     setAnswered(true);
     const question = questions[currentQuestion];
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/quiz/submit`, {
+      const res = await fetch(apiUrl('/quiz/submit'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           question_id: question.id,
           user_answer: answer,
-          user_id: user?.id || 0,
+          user_id: user!.id,
         }),
       });
+      if (!res.ok) throw new Error('Submit failed');
       const result = await res.json();
       setIsCorrect(result.correct);
       setCorrectAnswer(result.correct_answer);
@@ -71,7 +82,8 @@ export default function Quiz() {
         setTotalXpEarned(prev => prev + result.xp_earned);
       }
     } catch (err) {
-      console.error('Submit failed:', err);
+      console.error('Submit error:', err);
+      // vẫn tiếp tục, không chặn quiz
     }
   };
 
@@ -85,63 +97,41 @@ export default function Quiz() {
     }
   };
 
-  const handleReset = () => { fetchQuestions(); };
+  const handleReset = () => {
+    fetchQuestions();
+  };
 
-  // Loading
+  // --- Trạng thái Loading ---
   if (loading) {
+    return <PageState type="loading" message="Loading quiz..." />;
+  }
+
+  // --- Trạng thái Error ---
+  if (error) {
     return (
-      <div className={`min-h-screen ${palette.pageBg} flex items-center justify-center`}>
-        <div className="text-center">
-          <Loader2 size={40} className={`animate-spin mx-auto ${palette.textPrimary}`} />
-          <p className={`mt-4 ${palette.textMuted}`}>Loading quiz...</p>
-        </div>
-      </div>
+      <PageState
+        type="error"
+        message={error}
+        onAction={fetchQuestions}
+        actionLabel="Retry"
+      />
     );
   }
 
-  // Not logged in
-  if (!user) {
-    return (
-      <div className={`min-h-screen ${palette.pageBg}`}>
-        <TopNav />
-        <div className="flex items-center justify-center py-20">
-          <div className="text-center">
-            <HelpCircle size={48} className={`mx-auto ${palette.textMuted}`} />
-            <p className={`mt-4 ${palette.textPrimary} text-lg font-medium`}>
-              Please log in to play quiz
-            </p>
-            <Link href="/auth/login"
-              className={`mt-2 inline-block ${palette.textPrimary} underline font-medium`}
-            >
-              Go to login
-            </Link>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // No questions
+  // --- Trạng thái Empty (không có câu hỏi) ---
   if (questions.length === 0) {
     return (
-      <div className={`min-h-screen ${palette.pageBg}`}>
-        <TopNav />
-        <div className="flex items-center justify-center py-20">
-          <div className="text-center">
-            <HelpCircle size={48} className={`mx-auto ${palette.textMuted}`} />
-            <p className={`mt-4 ${palette.textPrimary} text-lg font-medium`}>
-              No quiz questions available.
-            </p>
-          </div>
-        </div>
-      </div>
+      <PageState
+        type="empty"
+        title="No quiz questions"
+        message="There are no questions available yet."
+      />
     );
   }
 
   const currentQ = questions[currentQuestion];
   const allAnswered = currentQuestion === questions.length - 1 && answered;
 
-  // Class override cho option (giữ nguyên màu xanh/đỏ)
   const getOptionOverrideClass = (option: string) => {
     if (!answered) return '';
     if (option === correctAnswer) {
@@ -157,7 +147,6 @@ export default function Quiz() {
     <div className={`min-h-screen ${palette.pageBg} ${typography.fontFamily}`}>
       <TopNav />
       <main className={`${spacing.container} !pt-6`}>
-        {/* Heading */}
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-10">
           <div>
             <h1 className={`${typography.heading.pageTitle} ${palette.textPrimary}`}>Quiz Mode</h1>
@@ -171,7 +160,6 @@ export default function Quiz() {
           </div>
         </div>
 
-        {/* Layout 2 cột */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Cột trái */}
           <div className="lg:col-span-7 space-y-5">
@@ -196,10 +184,9 @@ export default function Quiz() {
                 </div>
               </div>
 
-              {/* Video */}
               {currentQ.video_url ? (
                 <video
-                  src={`http://localhost:8000${currentQ.video_url}`}
+                  src={apiUrl(currentQ.video_url)}
                   autoPlay loop muted
                   className={`w-full ${borderRadius.button} border ${palette.cardBorder}`}
                   controls
@@ -210,7 +197,6 @@ export default function Quiz() {
                 </div>
               )}
 
-              {/* Progress bar */}
               <div className="mt-5">
                 <div className={`w-full ${palette.progressTrackBg} rounded-full h-2`}>
                   <div
@@ -286,4 +272,14 @@ export default function Quiz() {
       </main>
     </div>
   );
-}
+};
+
+const QuizPage: React.FC = () => {
+  return (
+    <ProtectedRoute>
+      <QuizContent />
+    </ProtectedRoute>
+  );
+};
+
+export default QuizPage;

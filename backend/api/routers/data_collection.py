@@ -3,41 +3,54 @@ import logging
 import os
 from typing import List, Optional
 import numpy as np
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from api.services.auth import require_admin
 from config import ACTIONS, DATA_PATH, FEATURE_SIZE, FRAMES_PER_VIDEO, VIDEOS_PER_ACTION
 from ml.data_collection import DataCollector
 
-router = APIRouter(prefix="/data-collection", tags=["data-collection"])
+router = APIRouter(
+    prefix="/data-collection",
+    tags=["data-collection"],
+    dependencies=[Depends(require_admin)],
+)
 logger = logging.getLogger(__name__)
+
+# Dùng chung một instance duy nhất cho toàn bộ router
 collector = DataCollector(data_path=DATA_PATH)
+
 
 class FrameItem(BaseModel):
     frame_num: int
     keypoints: list[float]
 
+
 class BatchFramePayload(BaseModel):
     frames: List[FrameItem]
+
 
 @router.get("/actions")
 async def get_actions():
     return {"actions": list(ACTIONS), "total": len(ACTIONS)}
 
+
 @router.get("/status/{action}")
 async def get_collection_status(action: str):
     if action not in ACTIONS:
         raise HTTPException(status_code=400, detail=f"Unknown action: {action}")
-    current_collector = DataCollector(data_path=DATA_PATH)
-    return current_collector.get_action_status(action)
+    # Sử dụng instance module-level
+    return collector.get_action_status(action)
+
 
 @router.get("/status")
 async def get_all_status():
-    current_collector = DataCollector(data_path=DATA_PATH)
+    # Dùng chung instance
     status_dict = {}
     for action in ACTIONS:
-        status_dict[action] = current_collector.get_action_status(action)
+        status_dict[action] = collector.get_action_status(action)
     return status_dict
+
 
 @router.post("/start/{action}/{video_num}")
 async def start_collection(
@@ -54,13 +67,14 @@ async def start_collection(
         raise HTTPException(status_code=400, detail="Failed to start collection")
     return {"status": "started", "action": action, "video_num": video_num}
 
-# ---------- THÊM: DELETE endpoint ----------
+
 @router.delete("/video/{action}/{video_num}")
 async def delete_video(action: str, video_num: int):
     if action not in ACTIONS:
         raise HTTPException(status_code=400, detail=f"Unknown action: {action}")
     success = collector.delete_video(action, video_num)
     return {"status": "deleted" if success else "not_found", "action": action, "video_num": video_num}
+
 
 @router.post("/frame-vector/{action}/{video_num}")
 async def save_frame_vector_batch(action: str, video_num: int, payload: BatchFramePayload):
@@ -84,7 +98,8 @@ async def save_frame_vector_batch(action: str, video_num: int, payload: BatchFra
 
     total_nonzero = sum(m["nonzero"] for m in saved)
     total_zeros = sum(m["zeros"] for m in saved)
-    logger.info("Batch saved for action=%s video=%s: %d frames, total nonzero=%d, zeros=%d", action, video_num, len(saved), total_nonzero, total_zeros)
+    logger.info("Batch saved for action=%s video=%s: %d frames, total nonzero=%d, zeros=%d",
+                action, video_num, len(saved), total_nonzero, total_zeros)
     return {
         "status": "batch_saved",
         "action": action,
@@ -95,6 +110,7 @@ async def save_frame_vector_batch(action: str, video_num: int, payload: BatchFra
         "frames": saved
     }
 
+
 @router.post("/validate/{action}")
 async def validate_action_data(action: str):
     if action not in ACTIONS:
@@ -102,12 +118,14 @@ async def validate_action_data(action: str):
     success, message = collector.validate_data(action)
     return {"action": action, "valid": success, "message": message}
 
+
 @router.delete("/reset/{action}")
 async def reset_collection(action: str):
     if action not in ACTIONS:
         raise HTTPException(status_code=400, detail=f"Unknown action: {action}")
     success = collector.reset_action(action)
     return {"status": "reset" if success else "error", "action": action}
+
 
 @router.get("/next-video/{action}")
 async def get_next_video(action: str):

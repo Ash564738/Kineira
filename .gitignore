@@ -3,7 +3,9 @@ frontend/node_modules/
 .next/
 dist/
 .env
+.env.local
 __pycache__/
 *.pyc
+*.tsbuildinfo
 backend/venv/
 backend/datasets/WLASL/start_kit/raw_videos/*

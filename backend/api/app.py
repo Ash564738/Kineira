@@ -1,4 +1,5 @@
 # api/app.py
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -14,10 +15,20 @@ app = FastAPI(title="Kineira API", version="0.1.0")
 
 app.mount("/static/videos", StaticFiles(directory=RAW_VIDEOS_DIR), name="static_videos")
 
+allowed_origins = [
+    origin.strip()
+    for origin in os.getenv(
+        "ALLOWED_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000",
+    ).split(",")
+    if origin.strip()
+]
+allow_all_origins = "*" in allowed_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=["*"] if allow_all_origins else allowed_origins,
+    allow_credentials=not allow_all_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -39,4 +50,3 @@ async def startup():
     logger.info("API startup")
     from api.services.inference import inference_service
     inference_service.startup()
-

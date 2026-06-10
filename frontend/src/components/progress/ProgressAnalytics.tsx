@@ -25,6 +25,7 @@ import {
   borderRadius,
   effects,
 } from '../../styles/theme';
+import { apiUrl } from '../../services/api/config';
 
 interface DailyStats {
   date: string;
@@ -104,10 +105,10 @@ export default function ProgressAnalytics() {
     if (!user) return;
     try {
       const [dailyRes, weeklyRes, monthlyRes, yearlyRes] = await Promise.all([
-        fetch(`${process.env.NEXT_PUBLIC_API_URL}/stats/daily/${user.id}?days=7`),
-        fetch(`${process.env.NEXT_PUBLIC_API_URL}/stats/weekly/${user.id}?weeks=12`),
-        fetch(`${process.env.NEXT_PUBLIC_API_URL}/stats/monthly/${user.id}?months=12`),
-        fetch(`${process.env.NEXT_PUBLIC_API_URL}/stats/yearly/${user.id}?years=5`),
+        fetch(apiUrl(`/stats/daily/${user.id}?days=7`)),
+        fetch(apiUrl(`/stats/weekly/${user.id}?weeks=12`)),
+        fetch(apiUrl(`/stats/monthly/${user.id}?months=12`)),
+        fetch(apiUrl(`/stats/yearly/${user.id}?years=5`)),
       ]);
       setDailyStats(await dailyRes.json());
       setWeeklyStats(await weeklyRes.json());

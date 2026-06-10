@@ -1,5 +1,5 @@
 // src/pages/progress.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import TopNav from '../components/layout/TopNav';
 import Button from '../components/layout/Button';
 import { fetchUserAttempts, fetchUserProgress } from '../services/api/client';
@@ -20,6 +20,8 @@ import {
 } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import { themeColors, typography, spacing, borderRadius, effects } from '../styles/theme';
+import ProtectedRoute from '../components/ProtectedRoute';
+import PageState from '@/components/ui/PageState';
 
 const tabs = [
   { key: 'overview', label: 'Overview', icon: LayoutDashboard },
@@ -27,34 +29,38 @@ const tabs = [
   { key: 'leaderboard', label: 'Leaderboard', icon: Trophy },
 ] as const;
 
-const ProgressPage: React.FC = () => {
+const ProgressContent: React.FC = () => {
   const [progress, setProgress] = useState<Progress[]>([]);
   const [attempts, setAttempts] = useState<Attempt[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'analytics' | 'leaderboard'>('overview');
   const { user } = useAuth();
   const { theme } = useTheme();
   const palette = themeColors[theme];
 
-  useEffect(() => {
+  const loadData = useCallback(async () => {
     if (!user) return;
-    const load = async () => {
-      setLoading(true);
-      try {
-        const [progressData, attemptData] = await Promise.all([
-          fetchUserProgress(user.id),
-          fetchUserAttempts(user.id),
-        ]);
-        setProgress(progressData.map(item => ({ ...item, completed: Boolean(item.completed) })));
-        setAttempts(attemptData);
-      } catch (error) {
-        console.error('Failed to fetch progress:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
+    setLoading(true);
+    setError(null);
+    try {
+      const [progressData, attemptData] = await Promise.all([
+        fetchUserProgress(user.id),
+        fetchUserAttempts(user.id),
+      ]);
+      setProgress(progressData.map(item => ({ ...item, completed: Boolean(item.completed) })));
+      setAttempts(attemptData);
+    } catch (err) {
+      console.error('Failed to fetch progress:', err);
+      setError('Failed to load progress data.');
+    } finally {
+      setLoading(false);
+    }
   }, [user]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const stats = {
     totalSigns: progress.length,
@@ -66,54 +72,24 @@ const ProgressPage: React.FC = () => {
         : 0,
   };
 
-  // --- Trạng thái: chưa đăng nhập ---
-  if (!user) {
-    return (
-      <div className={`min-h-screen ${palette.pageBg} ${typography.fontFamily}`}>
-        <div className="flex min-h-screen items-center justify-center px-6">
-          <div
-            className={`w-full max-w-md ${borderRadius.card} border ${palette.cardBorder} ${palette.cardBg} ${spacing.cardPadding} text-center`}
-          >
-            <div
-              className={`mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl ${palette.emptyStateIconBg}`}
-            >
-              <Sparkles className={`h-7 w-7 ${palette.emptyStateIconColor}`} />
-            </div>
-            <h1 className={`${typography.heading.sectionTitle} ${palette.textPrimary}`}>
-              Sign in required
-            </h1>
-            <p className={`mt-2 ${typography.body.normal} ${palette.textMuted}`}>
-              Please log in to view your progress dashboard.
-            </p>
-            <Button variant="primary" href="/auth/login" className="mt-6 gap-2">
-              Go to login
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // --- Loading ---
+  // Loading state toàn trang
   if (loading) {
+    return <PageState type="loading" message="Loading progress data..." />;
+  }
+
+  // Error state toàn trang (có nút Retry)
+  if (error) {
     return (
-      <div className={`min-h-screen ${palette.pageBg} ${typography.fontFamily}`}>
-        <div className="flex min-h-screen items-center justify-center">
-          <div
-            className={`flex items-center gap-3 ${borderRadius.button} border ${palette.cardBorder} ${palette.cardBg} px-5 py-4 text-sm`}
-          >
-            <div
-              className={`h-4 w-4 animate-spin rounded-full border-2 ${palette.spinnerBorder} ${palette.spinnerBorderTop}`}
-            />
-            Loading progress…
-          </div>
-        </div>
-      </div>
+      <PageState
+        type="error"
+        message={error}
+        onAction={loadData}
+        actionLabel="Retry"
+      />
     );
   }
 
-  // --- Card helper (sử dụng theme tokens) ---
+  // --- Card helper (giữ nguyên) ---
   const Card = ({ children, className = '' }: { children: React.ReactNode; className?: string }) => (
     <div
       className={`${borderRadius.card} border ${palette.cardBorder} ${palette.cardBg} ${spacing.cardPadding} ${className}`}
@@ -253,7 +229,6 @@ const ProgressPage: React.FC = () => {
                         </span>
                       </div>
                       <div className="flex items-center gap-4">
-                        {/* Progress track sử dụng theme */}
                         <div
                           className={`h-3 flex-1 overflow-hidden ${borderRadius.progress} ${palette.progressTrackBg}`}
                         >
@@ -340,6 +315,14 @@ const ProgressPage: React.FC = () => {
         {activeTab === 'leaderboard' && <Leaderboard />}
       </main>
     </div>
+  );
+};
+
+const ProgressPage: React.FC = () => {
+  return (
+    <ProtectedRoute>
+      <ProgressContent />
+    </ProtectedRoute>
   );
 };
 

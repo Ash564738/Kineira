@@ -8,9 +8,12 @@ import trainingService from '../services/api/trainingService';
 import TopNav from '../components/layout/TopNav';
 import { FEATURE_SIZE, FrameSample, VIDEOS_PER_ACTION, FRAMES_PER_VIDEO } from '../types/landmarks';
 import { useAuth } from '../contexts/AuthContext';
-import { useRouter } from 'next/router';
 import { useTheme } from '../contexts/ThemeContext';
 import { themeColors, typography, spacing, borderRadius, effects } from '../styles/theme';
+import { apiUrl, getAuthHeaders } from '../services/api/config';
+import ProtectedRoute from '../components/ProtectedRoute';
+import PageState from '@/components/ui/PageState';
+import { useToast } from '@/components/ui/ToastProvider';
 
 const STATUS_POLL_MS = 10000;
 const MAX_WAIT_MS_PER_FRAME = 5000;
@@ -19,11 +22,11 @@ const PAUSE_SECONDS = 5;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-const Collect: React.FC = () => {
+const CollectContent: React.FC = () => {
   const { user } = useAuth();
-  const router = useRouter();
   const { theme } = useTheme();
   const palette = themeColors[theme];
+  const { showToast } = useToast();
 
   const [allStatus, setAllStatus] = useState<AllStatus>({});
   const [collectingState, setCollectingState] = useState({
@@ -50,26 +53,25 @@ const Collect: React.FC = () => {
   const currentActionRef = useRef('');
   const targetVideosRef = useRef(50);
   const pauseResolveRef = useRef<(() => void) | null>(null);
+  const [loadingStatus, setLoadingStatus] = useState(true);
 
   useEffect(() => {
-    loadAllStatus();
+    loadAllStatus().finally(() => setLoadingStatus(false));
     const interval = setInterval(loadAllStatus, STATUS_POLL_MS);
     return () => clearInterval(interval);
   }, []);
-
+  
   useEffect(() => {
-    if (!isTraining) return;
+    if (!isTraining || loadingStatus) return;  // chờ load xong mới poll
     const poll = setInterval(async () => {
       try {
         const s = await trainingService.getStatus();
         setTrainingStatus(s);
         if (s.status === 'completed' || s.status === 'failed') setIsTraining(false);
-      } catch (e) {
-        console.error(e);
-      }
+      } catch (e) { console.error(e); }
     }, 1000);
     return () => clearInterval(poll);
-  }, [isTraining]);
+  }, [isTraining, loadingStatus]);
 
   async function loadAllStatus() {
     try {
@@ -132,6 +134,7 @@ const Collect: React.FC = () => {
     }
     return null;
   };
+
   const pauseWithUI = (message: string, seconds: number, manualContinue = true): Promise<void> => {
     return new Promise((resolve) => {
       setInfo(message);
@@ -214,6 +217,7 @@ const Collect: React.FC = () => {
       console.log('[Batch save response]', resp);
       return true;
     } catch (err: any) {
+      showToast(`Error: ${err.message}`, 'error');
       console.error('Batch save failed:', err);
       setError(`Batch save failed for video ${videoNum}: ${err.message}`);
       return false;
@@ -253,7 +257,9 @@ const Collect: React.FC = () => {
       const TOTAL_VIDEOS = status.target;
       targetVideosRef.current = TOTAL_VIDEOS;
 
-      const nextResp = await fetch(`http://localhost:8000/data-collection/next-video/${action}`);
+      const nextResp = await fetch(apiUrl(`/data-collection/next-video/${action}`), {
+        headers: getAuthHeaders(),
+      });
       if (!nextResp.ok) throw new Error('Failed to get next video');
       const { next_video_num } = await nextResp.json();
       let nextVideo = next_video_num;
@@ -315,7 +321,9 @@ const Collect: React.FC = () => {
 
   const handleStartCollection = async (action: string) => {
     setError(null);
-    const nextResp = await fetch(`http://localhost:8000/data-collection/next-video/${action}`);
+    const nextResp = await fetch(apiUrl(`/data-collection/next-video/${action}`), {
+      headers: getAuthHeaders(),
+    });
     if (!nextResp.ok) {
       setError('Failed to get next video number');
       return;
@@ -376,6 +384,10 @@ const Collect: React.FC = () => {
 
   const largeActiveClass = `px-5 py-3 ${borderRadius.button} font-semibold ${palette.actionButtonBg} ${palette.actionButtonText} ${palette.actionButtonHoverBg} ${palette.actionButtonHoverText} ${effects.transition}`;
   const largeDisabledClass = `px-5 py-3 ${borderRadius.button} font-semibold ${effects.transition} ${palette.disabledButtonBg} ${palette.disabledButtonText} cursor-not-allowed`;
+
+  if (loadingStatus) {
+    return <PageState type="loading" message="Loading collection status..." showNavSpace />;
+  }
 
   // ========== JSX ==========
   return (
@@ -507,6 +519,14 @@ const Collect: React.FC = () => {
         </div>
       </main>
     </div>
+  );
+};
+
+const Collect: React.FC = () => {
+  return (
+    <ProtectedRoute requireAdmin>
+      <CollectContent />
+    </ProtectedRoute>
   );
 };
 

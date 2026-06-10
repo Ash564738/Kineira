@@ -1,7 +1,8 @@
 // src/components/practice/AICoachFeedback.tsx
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useTheme } from '../../contexts/ThemeContext';
 import { themeColors, typography, spacing, borderRadius } from '../../styles/theme';
+import { apiUrl } from '../../services/api/config';
 
 interface FeedbackData {
   overall_score: number;
@@ -56,7 +57,7 @@ export default function AICoachFeedback({
       if (score < 0) { onAiResponse(); setLoading(false); return; }
       setLoading(true);
       try {
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/ai-coach/feedback`, {
+        const res = await fetch(apiUrl('/ai-coach/feedback'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ user_id: userId, sign, score, hand_similarity: handSimilarity, motion_score: motionScore, body_score: bodyScore, finger_details: fingerDetails }),

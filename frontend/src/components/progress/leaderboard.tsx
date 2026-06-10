@@ -1,9 +1,10 @@
 // src/components/progress/LeaderBoard.tsx
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { Crown, Medal, Award, Flame, Trophy, Sparkles } from 'lucide-react';
+import { Crown, Medal, Award, Flame, Trophy } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
 import { themeColors, typography, spacing, borderRadius, effects } from '../../styles/theme';
+import { apiUrl } from '../../services/api/config';
 
 interface LeaderboardEntry {
   rank: number;
@@ -30,11 +31,11 @@ export default function Leaderboard() {
 
   const fetchLeaderboard = async () => {
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/leaderboard/top?limit=20`);
+      const res = await fetch(apiUrl('/leaderboard/top?limit=20'));
       const data = await res.json();
       setEntries(data);
       if (user) {
-        const rankRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/leaderboard/user/${user.id}`);
+        const rankRes = await fetch(apiUrl(`/leaderboard/user/${user.id}`));
         setUserRank(await rankRes.json());
       }
     } catch (err) {

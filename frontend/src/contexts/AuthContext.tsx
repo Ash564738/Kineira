@@ -1,6 +1,7 @@
 // src/contexts/AuthContext.tsx
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
+import { apiUrl } from '../services/api/config';
 
 interface User {
   id: number;
@@ -11,6 +12,7 @@ interface User {
   xp: number;
   level: number;
   streak: number;
+  is_admin: boolean;
 }
 
 interface AuthContextType {
@@ -47,29 +49,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(false);
     }
   }, []);
+
   const fetchCurrentUser = async (authToken: string) => {
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/me`, {
+      const res = await fetch(apiUrl('/auth/me'), {
         headers: { Authorization: `Bearer ${authToken}` },
       });
       if (res.ok) {
         setUser(await res.json());
       } else {
+        // Token không hợp lệ (401, 403...) → xoá khỏi storage
         localStorage.removeItem('auth_token');
         setToken(null);
       }
     } catch (err) {
       console.error('Failed to fetch user:', err);
+      // Nếu có lỗi mạng, vẫn giữ token để thử lại sau
+    } finally {
+      setLoading(false);   // ✅ DỪNG LOADING TRONG MỌI TÌNH HUỐNG
     }
   };
+
   const refreshUser = async () => {
     const savedToken = localStorage.getItem('auth_token');
     if (savedToken) {
       await fetchCurrentUser(savedToken);
     }
   };
+
   const login = async (email: string, password: string) => {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/login`, {
+    const res = await fetch(apiUrl('/auth/login'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
@@ -83,7 +92,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const register = async (email: string, password: string) => {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/register`, {
+    const res = await fetch(apiUrl('/auth/register'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
@@ -97,7 +106,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const googleLogin = async (googleToken: string) => {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/google-login`, {
+    const res = await fetch(apiUrl('/auth/google-login'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token: googleToken }),
@@ -118,7 +127,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const forgotPassword = async (email: string) => {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/forgot-password`, {
+    const res = await fetch(apiUrl('/auth/forgot-password'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email }),
@@ -127,7 +136,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const resetPassword = async (resetToken: string, newPassword: string) => {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/reset-password`, {
+    const res = await fetch(apiUrl('/auth/reset-password'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token: resetToken, new_password: newPassword }),
@@ -138,7 +147,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const updateProfile = async (avatar_url?: string, username?: string) => {
     if (!token) throw new Error('Not authenticated');
     const res = await fetch(
-      `${process.env.NEXT_PUBLIC_API_URL}/auth/profile?avatar_url=${avatar_url || ''}&username=${username || ''}`,
+      apiUrl(`/auth/profile?avatar_url=${encodeURIComponent(avatar_url || '')}&username=${encodeURIComponent(username || '')}`),
       {
         method: 'PUT',
         headers: { 'Authorization': `Bearer ${token}` },
@@ -152,7 +161,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const changePassword = async (oldPassword: string, newPassword: string) => {
     if (!token) throw new Error('Not authenticated');
     const res = await fetch(
-      `${process.env.NEXT_PUBLIC_API_URL}/auth/change-password?old_password=${oldPassword}&new_password=${newPassword}`,
+      apiUrl(`/auth/change-password?old_password=${encodeURIComponent(oldPassword)}&new_password=${encodeURIComponent(newPassword)}`),
       {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` },
@@ -162,7 +171,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const verifyEmail = async (verifyToken: string) => {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/verify-email`, {
+    const res = await fetch(apiUrl('/auth/verify-email'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token: verifyToken }),
@@ -175,7 +184,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const resendVerification = async () => {
     if (!token) throw new Error('Not authenticated');
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/resend-verification`, {
+    const res = await fetch(apiUrl('/auth/resend-verification'), {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${token}` },
     });

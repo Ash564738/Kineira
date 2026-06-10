@@ -23,11 +23,10 @@ export default function TopNav({ active }: TopNavProps) {
   const { theme, toggleTheme } = useTheme();
   const palette = themeColors[theme];
 
-  /* ---------- các class đồng bộ theme ---------- */
   const navContainerClass = `inline-flex items-center gap-1 rounded-full border ${palette.cardBorder} ${palette.tabGroupBg} p-1 shadow-sm`;
 
   const getNavLinkClass = (name: string) =>
-    `inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-medium transition-all ${
+    `inline-flex items-center gap-2 rounded-full px-4 py-3 text-sm font-medium transition-all ${
       active === name
         ? `${palette.tabActiveBg} ${palette.tabActiveText}`
         : `${palette.tabInactiveText} ${palette.tabHoverBg} ${palette.tabHoverText}`
@@ -41,7 +40,7 @@ export default function TopNav({ active }: TopNavProps) {
     <header
       className={`${typography.fontFamily} border-b ${palette.cardBorder} backdrop-blur-xl ${palette.pageBg} sticky top-0 z-50`}
     >
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center gap-4">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between relative">
         {/* Logo */}
         <Link
           href="/"
@@ -50,31 +49,32 @@ export default function TopNav({ active }: TopNavProps) {
           Kineira
         </Link>
 
-        {/* Navigation – pill group */}
-        <nav className="flex-1 flex justify-center">
+        {/* Navigation – căn giữa tuyệt đối */}
+        <nav className="absolute left-1/2 transform -translate-x-1/2">
           <div className={navContainerClass}>
             <Link href="/translate" className={getNavLinkClass("translate")}>
               <Hand size={16} />
-              <span className="hidden sm:inline">Translate</span>
+              <span className="hidden min-[960px]:inline">Translate</span>
             </Link>
             <Link href="/lessons" className={getNavLinkClass("lessons")}>
               <BookOpen size={16} />
-              <span className="hidden sm:inline">Lessons</span>
+              <span className="hidden min-[960px]:inline">Lessons</span>
             </Link>
             <Link href="/progress" className={getNavLinkClass("progress")}>
               <BarChart3 size={16} />
-              <span className="hidden sm:inline">Progress</span>
+              <span className="hidden min-[960px]:inline">Progress</span>
             </Link>
-            <Link href="/collect" className={getNavLinkClass("collect")}>
-              <Database size={16} />
-              <span className="hidden sm:inline">Collect</span>
-            </Link>
+            {user?.is_admin && (
+              <Link href="/collect" className={getNavLinkClass("collect")}>
+                <Database size={16} />
+                <span className="hidden min-[960px]:inline">Collect</span>
+              </Link>
+            )}
           </div>
         </nav>
 
-        {/* Right section */}
+        {/* Actions bên phải */}
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-          {/* Theme toggle */}
           <button
             onClick={toggleTheme}
             className={subtleButtonClass}
@@ -85,25 +85,26 @@ export default function TopNav({ active }: TopNavProps) {
 
           {user ? (
             <>
-              {/* User info (desktop) */}
-              <div className="hidden sm:flex items-center gap-3">
+              {/* User info: icon luôn hiện, text chỉ hiện từ 960px */}
+              <div className="flex items-center gap-3">
                 <Link
                   href="/profile"
                   className={`w-9 h-9 rounded-full ${palette.iconContainerBg} ${palette.iconContainerText} flex items-center justify-center font-bold transition-colors`}
                 >
                   <User size={18} />
                 </Link>
-                <div className="text-right leading-tight">
+                <div className="hidden min-[960px]:flex flex-col text-right leading-tight">
                   <p className={`text-xs ${palette.textMuted}`}>Level {user.level}</p>
                   <p className={`text-sm font-medium ${palette.textPrimary}`}>
                     {user.username}
                   </p>
                 </div>
               </div>
-              {/* Logout button */}
+
+              {/* Logout: icon luôn hiện, chữ ẩn dưới 960px */}
               <button onClick={logout} className={subtleButtonClass}>
-                <LogOut size={16} />
-                <span className="hidden sm:inline">Logout</span>
+                <LogOut size={18} />
+                <span className="hidden min-[960px]:inline">Logout</span>
               </button>
             </>
           ) : (

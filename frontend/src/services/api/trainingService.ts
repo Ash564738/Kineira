@@ -1,6 +1,6 @@
 // src/services/api/trainingService.ts
 import axios from 'axios';
-import { API_BASE_URL } from "./config";
+import { apiUrl, getAuthHeaders } from "./config";
 
 export interface TrainingStatus {
   status: 'idle' | 'queued' | 'training' | 'completed' | 'failed' | 'cancelled';
@@ -26,27 +26,37 @@ export interface TrainingMetrics {
 
 class TrainingService {
   async startTraining() {
-    const response = await axios.post(`${API_BASE_URL}/training/start`);
+    const response = await axios.post(apiUrl("/training/start"), undefined, {
+      headers: getAuthHeaders(),
+    });
     return response.data;
   }
 
   async getStatus(): Promise<TrainingStatus> {
-    const response = await axios.get(`${API_BASE_URL}/training/status`);
+    const response = await axios.get(apiUrl("/training/status"), {
+      headers: getAuthHeaders(),
+    });
     return response.data;
   }
 
   async cancelTraining() {
-    const response = await axios.post(`${API_BASE_URL}/training/cancel`);
+    const response = await axios.post(apiUrl("/training/cancel"), undefined, {
+      headers: getAuthHeaders(),
+    });
     return response.data;
   }
 
   async validateData() {
-    const response = await axios.post(`${API_BASE_URL}/training/validate`);
+    const response = await axios.post(apiUrl("/training/validate"), undefined, {
+      headers: getAuthHeaders(),
+    });
     return response.data;
   }
 
   async getMetrics(): Promise<TrainingMetrics> {
-    const response = await axios.get(`${API_BASE_URL}/training/metrics`);
+    const response = await axios.get(apiUrl("/training/metrics"), {
+      headers: getAuthHeaders(),
+    });
     return response.data;
   }
 

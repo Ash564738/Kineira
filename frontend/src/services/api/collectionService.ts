@@ -1,5 +1,5 @@
 // src/services/api/collectionService.ts
-import { API_BASE_URL } from "./config"; // Thêm import này nếu cần
+import { apiUrl, getAuthHeaders } from "./config";
 export type AllStatus = Record<
   string,
   {
@@ -28,15 +28,20 @@ export type BatchSaveResponse = {
 
 class CollectionService {
   async getAllStatus(): Promise<AllStatus> {
-    const res = await fetch(`${API_BASE_URL}/data-collection/status`);
+    const res = await fetch(apiUrl("/data-collection/status"), {
+      headers: getAuthHeaders(),
+    });
     if (!res.ok) throw new Error(`Failed to load status: ${res.status}`);
     return res.json();
   }
 
   async startCollection(action: string, videoNum: number, overwrite: boolean = false) {
-    const url = new URL(`${API_BASE_URL}/data-collection/start/${action}/${videoNum}`);
+    const url = new URL(apiUrl(`/data-collection/start/${action}/${videoNum}`));
     if (overwrite) url.searchParams.set('overwrite', 'true');
-    const res = await fetch(url.toString(), { method: 'POST' });
+    const res = await fetch(url.toString(), {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
     if (!res.ok) throw new Error(`Failed to start collection: ${res.status}`);
     return res.json();
   }
@@ -47,10 +52,10 @@ class CollectionService {
     frames: FrameItem[]
   ): Promise<BatchSaveResponse> {
     const res = await fetch(
-      `${API_BASE_URL}/data-collection/frame-vector/${action}/${videoNum}`,
+      apiUrl(`/data-collection/frame-vector/${action}/${videoNum}`),
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({ frames }),
       }
     );
@@ -63,8 +68,9 @@ class CollectionService {
 
   // Thêm phương thức xoá video
   async deleteVideo(action: string, videoNum: number) {
-    const res = await fetch(`${API_BASE_URL}/data-collection/video/${action}/${videoNum}`, {
+    const res = await fetch(apiUrl(`/data-collection/video/${action}/${videoNum}`), {
       method: 'DELETE',
+      headers: getAuthHeaders(),
     });
     if (!res.ok) throw new Error(`Failed to delete video: ${res.status}`);
     return res.json();

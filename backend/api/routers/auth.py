@@ -1,7 +1,7 @@
 # api/routers/auth.py
-from fastapi import APIRouter, Depends, HTTPException, status, Header
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from datetime import timedelta
 import os
 import requests as http_requests
@@ -28,6 +28,8 @@ from api.services.auth import (
     create_access_token,
     verify_token,
     generate_verification_token,
+    is_admin_email,
+    get_current_user,          # <-- dùng dependency này
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -67,6 +69,7 @@ class UserResponse(BaseModel):
     xp: int
     level: int
     streak: int
+    is_admin: bool = False
 
     class Config:
         from_attributes = True
@@ -77,16 +80,18 @@ class AuthResponse(BaseModel):
     user: UserResponse
 
 
-def get_token_from_header(authorization: str = Header(None)) -> str:
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    try:
-        scheme, token = authorization.split(" ")
-        if scheme.lower() != "bearer":
-            raise HTTPException(status_code=401, detail="Invalid auth scheme")
-        return token
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid auth header")
+def serialize_user(user):
+    return {
+        "id": user.id,
+        "email": user.email,
+        "username": user.username,
+        "avatar_url": user.avatar_url,
+        "email_verified": user.email_verified,
+        "xp": user.xp,
+        "level": user.level,
+        "streak": user.streak,
+        "is_admin": is_admin_email(user.email),
+    }
 
 
 @router.post("/register", response_model=AuthResponse)
@@ -100,16 +105,7 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
 
     return {
         "access_token": token,
-        "user": {
-            "id": user.id,
-            "email": user.email,
-            "username": user.username,
-            "avatar_url": user.avatar_url,
-            "email_verified": user.email_verified,
-            "xp": user.xp,
-            "level": user.level,
-            "streak": user.streak,
-        },
+        "user": serialize_user(user),
     }
 
 
@@ -122,16 +118,7 @@ async def login(req: LoginRequest, db: Session = Depends(get_db)):
     token = create_access_token(user.id)
     return {
         "access_token": token,
-        "user": {
-            "id": user.id,
-            "email": user.email,
-            "username": user.username,
-            "avatar_url": user.avatar_url,
-            "email_verified": user.email_verified,
-            "xp": user.xp,
-            "level": user.level,
-            "streak": user.streak,
-        },
+        "user": serialize_user(user),
     }
 
 
@@ -141,7 +128,6 @@ async def google_login(req: GoogleLoginRequest, db: Session = Depends(get_db)):
     try:
         idinfo = id_token.verify_oauth2_token(req.token, requests.Request(), GOOGLE_CLIENT_ID)
     except ValueError:
-        # Fallback for access tokens returned by the frontend OAuth flow
         response = http_requests.get(
             "https://www.googleapis.com/oauth2/v1/userinfo",
             params={"alt": "json", "access_token": req.token},
@@ -168,16 +154,7 @@ async def google_login(req: GoogleLoginRequest, db: Session = Depends(get_db)):
     token = create_access_token(user.id)
     return {
         "access_token": token,
-        "user": {
-            "id": user.id,
-            "email": user.email,
-            "username": user.username or email.split("@")[0],
-            "avatar_url": user.avatar_url,
-            "email_verified": user.email_verified,
-            "xp": user.xp,
-            "level": user.level,
-            "streak": user.streak,
-        },
+        "user": serialize_user(user),
     }
 
 
@@ -204,87 +181,38 @@ async def reset_password(req: ResetPasswordRequest, db: Session = Depends(get_db
 
 
 @router.get("/me", response_model=UserResponse)
-async def get_current_user(authorization: str = Header(None), db: Session = Depends(get_db)):
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-    try:
-        scheme, token = authorization.split(" ")
-        if scheme.lower() != "bearer":
-            raise HTTPException(status_code=401, detail="Invalid auth scheme")
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid auth header")
-
-    user_id = verify_token(token)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    user = get_user_by_id(db, user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    return user
+async def get_current_user_info(current_user=Depends(get_current_user)):
+    """Trả về thông tin user hiện tại (đã xác thực qua dependency)."""
+    return serialize_user(current_user)
 
 
 @router.put("/profile", response_model=UserResponse)
 async def update_profile(
     avatar_url: str = None,
     username: str = None,
-    authorization: str = Header(None),
+    current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-    try:
-        scheme, token = authorization.split(" ")
-        if scheme.lower() != "bearer":
-            raise HTTPException(status_code=401, detail="Invalid auth scheme")
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid auth header")
-
-    user_id = verify_token(token)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    user = update_user_profile(db, user_id, avatar_url, username)
+    """Cập nhật avatar/username cho user đã đăng nhập."""
+    user = update_user_profile(db, current_user.id, avatar_url, username)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-
-    return user
+    return serialize_user(user)
 
 
 @router.post("/change-password")
 async def change_password(
     old_password: str,
     new_password: str,
-    authorization: str = Header(None),
+    current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-    try:
-        scheme, token = authorization.split(" ")
-        if scheme.lower() != "bearer":
-            raise HTTPException(status_code=401, detail="Invalid auth scheme")
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid auth header")
-
-    user_id = verify_token(token)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    user = get_user_by_id(db, user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    if not verify_password(old_password, user.hashed_password or ""):
+    """Đổi mật khẩu cho user hiện tại."""
+    if not verify_password(old_password, current_user.hashed_password or ""):
         raise HTTPException(status_code=401, detail="Incorrect old password")
 
     hashed_pwd = hash_password(new_password)
-    update_password(db, user.id, hashed_pwd)
-
+    update_password(db, current_user.id, hashed_pwd)
     return {"message": "Password changed successfully"}
 
 
@@ -303,32 +231,15 @@ async def verify_email_endpoint(
 
 @router.post("/resend-verification")
 async def resend_verification(
-    authorization: str = Header(None),
+    current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-    try:
-        scheme, token = authorization.split(" ")
-        if scheme.lower() != "bearer":
-            raise HTTPException(status_code=401, detail="Invalid auth scheme")
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid auth header")
-
-    user_id = verify_token(token)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    user = get_user_by_id(db, user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    if user.email_verified:
+    """Gửi lại email xác thực cho user đã đăng nhập."""
+    if current_user.email_verified:
         return {"message": "Email already verified"}
 
     verification_token = generate_verification_token()
-    user.verification_token = verification_token
+    current_user.verification_token = verification_token
     db.commit()
 
     return {

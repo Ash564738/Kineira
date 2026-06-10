@@ -1,17 +1,20 @@
 # api/routers/training.py
 import asyncio
 import logging
-from threading import Thread
+from threading import Thread, Event
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from api.services.auth import require_admin
 from ml.train_holistic import HolisticTrainer
+from config import LSTM_EPOCHS, ACTIONS, DATA_PATH
 
-from config import LSTM_EPOCHS
-
-
-router = APIRouter(prefix="/training", tags=["training"])
+router = APIRouter(
+    prefix="/training",
+    tags=["training"],
+    dependencies=[Depends(require_admin)],
+)
 logger = logging.getLogger(__name__)
 
 training_state = {
@@ -27,6 +30,7 @@ training_state = {
 
 trainer: Optional[HolisticTrainer] = None
 training_thread: Optional[Thread] = None
+cancel_event = Event()   # <-- Cờ huỷ training
 
 
 def get_trainer() -> Optional[HolisticTrainer]:
@@ -46,49 +50,55 @@ def _train_worker():
     logger.info("TRAINING PROCESS STARTED")
     logger.info("=" * 80)
     try:
-        logger.debug(f"[TRAIN_WORKER] Initializing trainer...")
         train_obj = get_trainer()
         if train_obj is None:
-            logger.error("[TRAIN_WORKER] Trainer initialization failed - TensorFlow/Keras not available")
+            logger.error("Trainer initialization failed - TensorFlow/Keras not available")
             training_state["status"] = "failed"
             training_state["message"] = "TensorFlow/Keras not available for training"
             return
 
-        logger.info("[TRAIN_WORKER] Trainer initialized successfully")
+        logger.info("Trainer initialized successfully")
         training_state["status"] = "training"
         training_state["message"] = "Starting training..."
         training_state["current_epoch"] = 0
         training_state["total_epochs"] = LSTM_EPOCHS
-        logger.info(f"[TRAIN_WORKER] Training state: status={training_state['status']}, total_epochs={training_state['total_epochs']}")
 
         def progress(epoch, logs):
+            # Nếu đã có yêu cầu huỷ, ta vẫn cập nhật tiến độ để frontend biết
             training_state["current_epoch"] = epoch
             training_state["loss"] = logs.get("loss")
             training_state["accuracy"] = logs.get("categorical_accuracy")
-            # Calculate progress percentage
-            total_epochs = training_state["total_epochs"]
-            if total_epochs > 0:
-                training_state["progress"] = int((epoch / total_epochs) * 100)
-            logger.debug(f"[TRAIN_WORKER] Epoch {epoch}: loss={training_state['loss']}, accuracy={training_state['accuracy']}, progress={training_state['progress']}%")
+            total = training_state["total_epochs"]
+            if total > 0:
+                training_state["progress"] = int((epoch / total) * 100)
 
-        logger.info("[TRAIN_WORKER] Starting actual training...")
+        # Gọi train (blocking)
         metrics = train_obj.train(progress_callback=progress)
-        logger.info(f"[TRAIN_WORKER] Training returned metrics: {metrics}")
 
+        # Sau khi train kết thúc, kiểm tra cờ huỷ
+        if cancel_event.is_set():
+            logger.info("Training was cancelled; keeping status as cancelled")
+            # Giữ nguyên trạng thái cancelled, không ghi đè
+            return
+
+        # Nếu không bị huỷ thì hoàn thành bình thường
         training_state["status"] = "completed"
         training_state["metrics"] = metrics
         training_state["message"] = "Training completed successfully"
         training_state["accuracy"] = metrics.get("accuracy", 0)
         training_state["progress"] = 100
 
-        logger.info(f"[TRAIN_WORKER] Training completed successfully. Accuracy: {training_state['accuracy']}, Metrics: {metrics}")
+        logger.info(f"Training completed. Accuracy: {training_state['accuracy']}")
         logger.info("=" * 80)
         logger.info("TRAINING PROCESS COMPLETED")
         logger.info("=" * 80)
+
     except Exception as e:
-        logger.error(f"[TRAIN_WORKER] Training failed with exception: {type(e).__name__}: {str(e)}", exc_info=True)
-        training_state["status"] = "failed"
-        training_state["message"] = str(e)
+        logger.error(f"Training failed: {type(e).__name__}: {str(e)}", exc_info=True)
+        # Nếu đã cancelled thì không ghi đè
+        if not cancel_event.is_set():
+            training_state["status"] = "failed"
+            training_state["message"] = str(e)
         logger.info("=" * 80)
         logger.info("TRAINING PROCESS FAILED")
         logger.info("=" * 80)
@@ -97,13 +107,13 @@ def _train_worker():
 @router.post("/start")
 async def start_training():
     global training_state, training_thread
-    logger.info("[TRAINING_ENDPOINT] POST /training/start called")
+    logger.info("POST /training/start")
 
     if training_state["status"] == "training":
-        logger.warning("[TRAINING_ENDPOINT] Training already in progress")
         raise HTTPException(status_code=400, detail="Training already in progress")
 
-    logger.info("[TRAINING_ENDPOINT] Starting new training job...")
+    # Reset cờ huỷ và trạng thái
+    cancel_event.clear()
     training_state = {
         "status": "queued",
         "progress": 0,
@@ -117,59 +127,46 @@ async def start_training():
 
     training_thread = Thread(target=_train_worker, daemon=True)
     training_thread.start()
-    logger.info(f"[TRAINING_ENDPOINT] Training thread started: {training_thread.ident}")
+    logger.info(f"Training thread started: {training_thread.ident}")
 
     return {"status": "queued", "message": "Training started in background"}
 
 
 @router.get("/status")
 async def get_training_status():
-    logger.debug(f"[TRAINING_ENDPOINT] GET /training/status called. Current state: {training_state}")
     return training_state
 
 
 @router.post("/cancel")
 async def cancel_training():
     global training_state
-    logger.info("[TRAINING_ENDPOINT] POST /training/cancel called")
+    logger.info("POST /training/cancel")
 
     if training_state["status"] != "training":
-        logger.warning(f"[TRAINING_ENDPOINT] Cannot cancel - no training in progress. Current status: {training_state['status']}")
         raise HTTPException(status_code=400, detail="No training in progress")
 
+    # Bật cờ huỷ
+    cancel_event.set()
     training_state["status"] = "cancelled"
     training_state["message"] = "Training cancelled by user"
-    logger.info("[TRAINING_ENDPOINT] Training cancelled by user")
+    logger.info("Training cancelled by user")
 
     return {"status": "cancelled"}
 
 
 @router.post("/validate")
 async def validate_training_data():
-    logger.info("[TRAINING_ENDPOINT] POST /training/validate called")
+    # Sử dụng collector được chia sẻ từ data_collection router
+    from api.routers.data_collection import collector
     results = {}
-    from config import ACTIONS, DATA_PATH
-    from ml.data_collection import DataCollector
-
-    logger.debug(f"[TRAINING_ENDPOINT] Loading collector with data_path: {DATA_PATH}")
-    collector = DataCollector(data_path=DATA_PATH)
-
     for action in ACTIONS:
-        logger.debug(f"[TRAINING_ENDPOINT] Validating action: {action}")
         success, message = collector.validate_data(action)
-        logger.debug(f"[TRAINING_ENDPOINT] Action {action} validation: success={success}, message={message}")
         results[action] = {"valid": success, "message": message}
-
-    logger.info(f"[TRAINING_ENDPOINT] Validation complete. Results: {results}")
     return results
 
 
 @router.get("/metrics")
 async def get_training_metrics():
-    logger.info("[TRAINING_ENDPOINT] GET /training/metrics called")
     if training_state["metrics"] is None:
-        logger.warning("[TRAINING_ENDPOINT] No completed training metrics available")
         raise HTTPException(status_code=400, detail="No completed training metrics")
-
-    logger.debug(f"[TRAINING_ENDPOINT] Returning metrics: {training_state['metrics']}")
     return training_state["metrics"]

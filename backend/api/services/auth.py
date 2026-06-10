@@ -1,4 +1,5 @@
 # api/services/auth.py
+import os
 import secrets
 from datetime import datetime, timedelta
 from typing import Optional
@@ -10,9 +11,25 @@ from sqlalchemy.orm import Session
 
 from db.repository import get_db, get_user_by_id
 
-SECRET_KEY = "your-secret-key-change-this-in-production"
+APP_ENV = os.getenv("APP_ENV", "development").lower()
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dev-insecure-secret-change-me")
+if APP_ENV == "production" and SECRET_KEY == "dev-insecure-secret-change-me":
+    raise RuntimeError("JWT_SECRET_KEY must be set in production")
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 24
+
+
+def get_admin_emails() -> set[str]:
+    return {
+        email.strip().lower()
+        for email in os.getenv("ADMIN_EMAILS", "").split(",")
+        if email.strip()
+    }
+
+
+def is_admin_email(email: str | None) -> bool:
+    return bool(email and email.lower() in get_admin_emails())
 
 
 def hash_password(password: str) -> str:
@@ -65,6 +82,12 @@ async def get_current_user(
         raise HTTPException(status_code=404, detail="User not found")
 
     return user
+
+
+async def require_admin(current_user=Depends(get_current_user)):
+    if not is_admin_email(current_user.email):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return current_user
 
 
 def generate_verification_token() -> str:

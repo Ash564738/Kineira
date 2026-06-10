@@ -5,12 +5,15 @@ import Button from '../components/layout/Button';
 import { fetchLessons as fetchLessonsApi, fetchUserProgress } from '../services/api/client';
 import { Lesson, Progress } from '../types/api';
 import { useAuth } from '@/contexts/AuthContext';
-import { Flame, Trophy, ArrowRight, Calendar, Target } from 'lucide-react';
+import { Trophy, ArrowRight, Calendar, Target } from 'lucide-react';
 import { useRouter } from 'next/router';
 import { useTheme } from '../contexts/ThemeContext';
 import { themeColors, typography, spacing, borderRadius, effects } from '../styles/theme';
+import { apiUrl } from '../services/api/config';
+import ProtectedRoute from '../components/ProtectedRoute';
+import PageState from '@/components/ui/PageState';
 
-const Lessons: React.FC = () => {
+const LessonsContent: React.FC = () => {
   const { user, refreshUser } = useAuth();
   const router = useRouter();
   const { theme } = useTheme();
@@ -19,6 +22,7 @@ const Lessons: React.FC = () => {
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [progress, setProgress] = useState<Progress[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<string>('all');
 
   const [dailySign, setDailySign] = useState('');
@@ -27,11 +31,11 @@ const Lessons: React.FC = () => {
   const [dailyReward, setDailyReward] = useState(0);
   const [dailyCanComplete, setDailyCanComplete] = useState(false);
 
+  // Tải dữ liệu ban đầu
   useEffect(() => {
     if (!user) return;
     fetchDailyChallenge();
-    fetchLessons();
-    fetchProgress();
+    loadAllData();
   }, [user]);
 
   useEffect(() => {
@@ -56,10 +60,22 @@ const Lessons: React.FC = () => {
     return () => router.events.off('routeChangeComplete', handleRouteChange);
   }, [user]);
 
+  const loadAllData = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      await Promise.all([fetchLessons(), fetchProgress()]);
+    } catch (e) {
+      setError('Failed to load lessons. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const fetchDailyChallenge = async () => {
     if (!user) return;
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/daily-challenge/sign?user_id=${user.id}`);
+      const res = await fetch(apiUrl(`/daily-challenge/sign?user_id=${user.id}`));
       if (!res.ok) throw new Error('Failed');
       const data = await res.json();
       setDailySign(data.sign);
@@ -75,7 +91,7 @@ const Lessons: React.FC = () => {
   const handleDailyComplete = async () => {
     if (!user) return;
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/daily-challenge/complete`, {
+      const res = await fetch(apiUrl('/daily-challenge/complete'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: user.id, sign: dailySign }),
@@ -96,23 +112,13 @@ const Lessons: React.FC = () => {
   };
 
   const fetchLessons = async () => {
-    try {
-      const data = await fetchLessonsApi();
-      setLessons(data);
-    } catch (error) {
-      console.error('Failed to fetch lessons:', error);
-    }
+    const data = await fetchLessonsApi();
+    setLessons(data);
   };
 
   const fetchProgress = async () => {
-    try {
-      const data = await fetchUserProgress(user?.id || 1);
-      setProgress(data);
-    } catch (error) {
-      console.error('Failed to fetch progress:', error);
-    } finally {
-      setLoading(false);
-    }
+    const data = await fetchUserProgress(user?.id || 1);
+    setProgress(data);
   };
 
   const getProgressForLesson = (signId: number) => {
@@ -127,11 +133,20 @@ const Lessons: React.FC = () => {
   const filteredLessons =
     filter === 'all' ? lessons : lessons.filter(l => l.difficulty.toLowerCase() === filter.toLowerCase());
 
+  // Loading state
   if (loading) {
+    return <PageState type="loading" message="Loading lessons..." />;
+  }
+
+  // Error state (có nút Retry)
+  if (error) {
     return (
-      <div className={`min-h-screen ${palette.pageBg} flex items-center justify-center`}>
-        <div className={palette.textMuted}>Loading lessons...</div>
-      </div>
+      <PageState
+        type="error"
+        message={error}
+        onAction={loadAllData}
+        actionLabel="Retry"
+      />
     );
   }
 
@@ -238,60 +253,68 @@ const Lessons: React.FC = () => {
           </div>
         </div>
 
-        {/* Lesson Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-          {filteredLessons.map((lesson) => {
-            const lessonProgress = getProgressForLesson(lesson.sign_id);
-            return (
-              <div
-                key={lesson.id}
-                className={`${borderRadius.card} border ${palette.cardBorder} ${palette.cardBg} ${spacing.cardPadding} transition`}
-              >
-                <div className="flex justify-between items-start mb-5">
-                  <h3 className={`${typography.heading.cardTitle} ${palette.textPrimary}`}>{lesson.title}</h3>
-                  <span className={`${borderRadius.badge} px-3 py-1 text-xs font-medium border ${getDifficultyColor(lesson.difficulty)}`}>
-                    {lesson.difficulty}
-                  </span>
-                </div>
-                <p className={`${typography.body.normal} ${palette.textMuted} mb-5`}>{lesson.description}</p>
-                {lessonProgress && (
-                  <div className="mb-5">
-                    <div className={`flex justify-between ${typography.body.small} ${palette.textMuted} mb-2`}>
-                      <span>Best Score</span>
-                      <span className={palette.textPrimary}>{lessonProgress.best_score.toFixed(0)}%</span>
-                    </div>
-                    <div className={`h-2 ${borderRadius.progress} ${palette.progressTrackBg} overflow-hidden`}>
-                      <div
-                        className={`h-full ${borderRadius.progress} ${palette.progressFillBg}`}
-                        style={{ width: `${lessonProgress.best_score}%` }}
-                      />
-                    </div>
-                    <div className={`mt-2 ${typography.body.small} ${palette.textMuted}`}>
-                      {lessonProgress.attempts_count} attempts {lessonProgress.completed ? '• completed' : ''}
-                    </div>
-                  </div>
-                )}
-                <Button
-                  variant="primary"
-                  href={`/practice/${lesson.id}`}
-                  className="w-full justify-center"
+        {/* Lesson Cards */}
+        {filteredLessons.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+            {filteredLessons.map((lesson) => {
+              const lessonProgress = getProgressForLesson(lesson.sign_id);
+              return (
+                <div
+                  key={lesson.id}
+                  className={`${borderRadius.card} border ${palette.cardBorder} ${palette.cardBg} ${spacing.cardPadding} transition`}
                 >
-                  {lessonProgress?.completed ? 'Review Lesson' : 'Start Lesson'}
-                </Button>
-              </div>
-            );
-          })}
-        </div>
-
-        {filteredLessons.length === 0 && (
-          <div className={`mt-10 ${borderRadius.card} border ${palette.cardBorder} p-12 text-center`}>
-            <p className={`text-lg ${palette.textMuted}`}>No lessons available for this filter.</p>
-            <p className={`text-sm ${palette.textMuted} mt-2`}>Try selecting a different difficulty level.</p>
+                  <div className="flex justify-between items-start mb-5">
+                    <h3 className={`${typography.heading.cardTitle} ${palette.textPrimary}`}>{lesson.title}</h3>
+                    <span className={`${borderRadius.badge} px-3 py-1 text-xs font-medium border ${getDifficultyColor(lesson.difficulty)}`}>
+                      {lesson.difficulty}
+                    </span>
+                  </div>
+                  <p className={`${typography.body.normal} ${palette.textMuted} mb-5`}>{lesson.description}</p>
+                  {lessonProgress && (
+                    <div className="mb-5">
+                      <div className={`flex justify-between ${typography.body.small} ${palette.textMuted} mb-2`}>
+                        <span>Best Score</span>
+                        <span className={palette.textPrimary}>{lessonProgress.best_score.toFixed(0)}%</span>
+                      </div>
+                      <div className={`h-2 ${borderRadius.progress} ${palette.progressTrackBg} overflow-hidden`}>
+                        <div
+                          className={`h-full ${borderRadius.progress} ${palette.progressFillBg}`}
+                          style={{ width: `${lessonProgress.best_score}%` }}
+                        />
+                      </div>
+                      <div className={`mt-2 ${typography.body.small} ${palette.textMuted}`}>
+                        {lessonProgress.attempts_count} attempts {lessonProgress.completed ? '• completed' : ''}
+                      </div>
+                    </div>
+                  )}
+                  <Button
+                    variant="primary"
+                    href={`/practice/${lesson.id}`}
+                    className="w-full justify-center"
+                  >
+                    {lessonProgress?.completed ? 'Review Lesson' : 'Start Lesson'}
+                  </Button>
+                </div>
+              );
+            })}
           </div>
+        ) : (
+            <div className = {`${borderRadius.card} border ${palette.cardBorder} ${palette.cardBg} p-12 text-center`}>
+              <p className={`text-lg ${palette.textMuted}`}>No lessons available for this filter.</p>
+              <p className={`text-sm ${palette.textMuted} mt-2`}>Try selecting a different difficulty level.</p>
+            </div>
         )}
       </main>
     </div>
   );
 };
 
-export default Lessons;
+const LessonsPage: React.FC = () => {
+  return (
+    <ProtectedRoute>
+      <LessonsContent />
+    </ProtectedRoute>
+  );
+};
+
+export default LessonsPage;

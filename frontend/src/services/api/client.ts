@@ -1,6 +1,6 @@
 // src/services/api/client.ts
 import { Attempt, AttemptPayload, Lesson, PredictionResult, Progress, ScoringResult } from "../../types/api";
-import { API_BASE_URL } from "./config";
+import { apiUrl } from "./config";
 const getToken = () => localStorage.getItem('auth_token');
 
 export async function fetchWithToken(url: string, options: RequestInit = {}) {
@@ -23,7 +23,7 @@ async function parseJson<T>(res: Response): Promise<T> {
 }
 
 export async function translateSign(keypointsSequence: number[][]) {
-  const res = await fetch(`${API_BASE_URL}/translate`, {
+  const res = await fetch(apiUrl("/translate"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ keypoints_sequence: keypointsSequence }),
@@ -32,7 +32,7 @@ export async function translateSign(keypointsSequence: number[][]) {
 }
 
 export async function scoreGesture(userSequence: number[][], targetSign: string) {
-  const res = await fetch(`${API_BASE_URL}/score`, {
+  const res = await fetch(apiUrl("/score"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -44,27 +44,27 @@ export async function scoreGesture(userSequence: number[][], targetSign: string)
 }
 
 export async function fetchLessons() {
-  const res = await fetch(`${API_BASE_URL}/lessons`);
+  const res = await fetch(apiUrl("/lessons"));
   return parseJson<Lesson[]>(res);
 }
 
 export async function fetchLesson(lessonId: string | number) {
-  const res = await fetch(`${API_BASE_URL}/lessons/${lessonId}`);
+  const res = await fetch(apiUrl(`/lessons/${lessonId}`));
   return parseJson<Lesson>(res);
 }
 
 export async function fetchUserProgress(userId = 1) {
-  const res = await fetch(`${API_BASE_URL}/users/${userId}/progress`);
+  const res = await fetch(apiUrl(`/users/${userId}/progress`));
   return parseJson<Progress[]>(res);
 }
 
 export async function fetchUserAttempts(userId = 1) {
-  const res = await fetch(`${API_BASE_URL}/users/${userId}/attempts`);
+  const res = await fetch(apiUrl(`/users/${userId}/attempts`));
   return parseJson<Attempt[]>(res);
 }
 
 export async function saveAttempt(userId: number, payload: AttemptPayload) {
-  const res = await fetch(`${API_BASE_URL}/users/${userId}/progress`, {
+  const res = await fetch(apiUrl(`/users/${userId}/progress`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -73,7 +73,7 @@ export async function saveAttempt(userId: number, payload: AttemptPayload) {
 }
 
 export async function resetTranslate() {
-  const res = await fetch(`${API_BASE_URL}/translate/reset`, {
+  const res = await fetch(apiUrl("/translate/reset"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
   });

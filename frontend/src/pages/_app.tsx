@@ -3,6 +3,7 @@ import { AuthProvider } from '../contexts/AuthContext';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import '../styles/globals.css';
 import { ThemeProvider } from '../contexts/ThemeContext';
+import { ToastProvider } from '../components/ui/ToastProvider';
 
 export default function MyApp({ Component, pageProps }: AppProps) {
   const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || '';
@@ -11,7 +12,9 @@ export default function MyApp({ Component, pageProps }: AppProps) {
     <ThemeProvider>
       <GoogleOAuthProvider clientId={googleClientId}>
         <AuthProvider>
-          <Component {...pageProps} />
+          <ToastProvider>
+            <Component {...pageProps} />
+          </ToastProvider>
         </AuthProvider>
       </GoogleOAuthProvider>
     </ThemeProvider>
