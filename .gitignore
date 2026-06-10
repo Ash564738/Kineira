@@ -2,8 +2,8 @@ node_modules/
 frontend/node_modules/
 .next/
 dist/
-.env
-.env.local
+backend/.env
+frontend/.env.local
 __pycache__/
 *.pyc
 *.tsbuildinfo
